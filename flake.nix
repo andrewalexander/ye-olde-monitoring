@@ -28,6 +28,7 @@
       checks = nixpkgs.lib.genAttrs linux (system: {
         module = nixpkgs.legacyPackages.${system}.testers.runNixOSTest (import ./nix/test.nix self);
         vpn = nixpkgs.legacyPackages.${system}.testers.runNixOSTest ./nix/test-vpn.nix;
+        media = nixpkgs.legacyPackages.${system}.testers.runNixOSTest ./nix/test-media.nix;
       });
     };
 }
