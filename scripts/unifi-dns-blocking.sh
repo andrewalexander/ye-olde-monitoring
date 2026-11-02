@@ -8,7 +8,8 @@
 #   ssh root@<router> 'sh -s' -- --off < scripts/unifi-dns-blocking.sh   # undo
 #
 # What it installs:
-#   /data/dnscount/         lists, blocklist.txt, allowlist.txt, update.sh, ensure.sh
+#   /data/dnscount/         lists, blocklist.txt, allowlist.txt, local-records.conf,
+#                           update.sh, ensure.sh
 #   dnscount-dns-ensure     every minute: puts the dnsmasq drop-in back if a
 #                           reboot or UniFi removed it
 #   dnscount-dns-update     nightly: refreshes the lists, restarts dnsmasq if
@@ -16,6 +17,10 @@
 #
 # To let a blocked site through, add its domain to
 # /data/dnscount/allowlist.txt and run /data/dnscount/update.sh.
+#
+# To answer a name locally (split-horizon DNS), add it to
+# /data/dnscount/local-records.conf and run /data/dnscount/ensure.sh --restart:
+#   address=/service.example.com/192.168.1.10
 #
 # CAVEATS:
 #   - This isn't supported by UniFi. A firmware update may remove the systemd
@@ -65,6 +70,14 @@ if [ ! -f "$DIR/allowlist.txt" ]; then
 	cat > "$DIR/allowlist.txt" <<'EOF'
 # One domain per line, with its subdomains. These are never blocked.
 # Run /data/dnscount/update.sh after editing.
+EOF
+fi
+
+if [ ! -f "$DIR/local-records.conf" ]; then
+	cat > "$DIR/local-records.conf" <<'EOF'
+# Names this router answers itself. Stays on the router, and re-running the
+# installer keeps it. Run /data/dnscount/ensure.sh --restart after editing.
+# address=/service.example.com/192.168.1.10
 EOF
 fi
 
@@ -179,6 +192,15 @@ want='log-queries=extra'
 if [ -s "$DIR/blocklist.conf" ] && [ ! -e "$DIR/disabled" ]; then
 	want="$want
 conf-file=$DIR/blocklist.conf"
+fi
+if [ -f "$DIR/local-records.conf" ] && [ ! -e "$DIR/disabled" ]; then
+	# A typo here mustn't stop dnsmasq from starting.
+	if dnsmasq --test --conf-file="$DIR/local-records.conf" >/dev/null 2>&1; then
+		want="$want
+conf-file=$DIR/local-records.conf"
+	else
+		log "local-records.conf failed dnsmasq --test; leaving it out"
+	fi
 fi
 
 restart=${1:-}
