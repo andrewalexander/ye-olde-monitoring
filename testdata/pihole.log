@@ -1,0 +1,5 @@
+Oct 27 09:00:00 dnsmasq[811]: query[A] doubleclick.net from 10.0.0.12
+Oct 27 09:00:00 dnsmasq[811]: gravity blocked doubleclick.net is 0.0.0.0
+Oct 27 09:00:01 pihole-FTL[811]: query[HTTPS] github.com from 10.0.0.12
+Oct 27 09:00:01 pihole-FTL[811]: /etc/pihole/custom.list nas.lan is 10.0.0.2
+Oct 27 09:00:02 dnsmasq[811]: 4711 10.0.0.13/53122 query[A] example.com from 10.0.0.13

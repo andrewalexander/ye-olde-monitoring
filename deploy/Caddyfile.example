@@ -1,0 +1,83 @@
+# Add the marked parts to each site block that should get the counter and
+# request logging. dnscount listens on 127.0.0.1:8080 (deploy/dnscount.env.example).
+
+example.com {
+	# --- dnscount: JSON access log for dnscount-caddy-log.service ---------
+	# "mode" needs Caddy 2.8+. On older Caddy, give the dnscount user read
+	# access some other way (for example: setfacl -m u:dnscount:r on the file).
+	log {
+		output file /var/log/caddy/access.log {
+			mode 640
+		}
+		format json
+	}
+
+	# --- dnscount: public counter ------------------------------------------
+	# <script src="/counter.js" data-site="example.com"></script>
+	handle /counter.* {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# --- dnscount: /ingest for Go apps on your LAN/VPC only ----------------
+	# Anyone else gets the site's normal 404. Apps can also post straight to
+	# http://<this-host>:8080/ingest if you bind dnscount to the LAN.
+	@dnscount_ingest {
+		path /ingest
+		remote_ip private_ranges
+	}
+	handle @dnscount_ingest {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# ...your existing site config...
+	root * /srv/example.com
+	file_server
+}
+
+# Caddy rewrites X-Forwarded-For itself (it ignores client-supplied values
+# unless you configure trusted_proxies), so dnscount trusting 127.0.0.1
+# yields the real visitor IP.
+
+# --- Jellyfin (or any app that puts credentials in URLs) -------------------
+# Same log as above, but filtered so tokens never reach disk. dnscount also
+# redacts api_key/token/... in query strings and referers when it stores hits.
+# NixOS: deploy/nixos/media.nix has this, plus a LAN-only :8096 for Roku.
+#
+# jellyfin.example.com {
+# 	log {
+# 		output file /var/log/caddy/access.log {
+# 			mode 640
+# 		}
+# 		format filter {
+# 			request>uri query {
+# 				replace api_key REDACTED
+# 				replace ApiKey REDACTED
+# 			}
+# 			request>headers>Referer regexp "(?i)(api_?key|token)=[^&#]*" "$1=REDACTED"
+# 			request>headers>X-Emby-Authorization delete
+# 			request>headers>X-Emby-Token delete
+# 			wrap json
+# 		}
+# 	}
+# 	reverse_proxy 127.0.0.1:8097
+# }
+
+# --- When a VPS sits in front (visitor -> VPS -> router -> this host) --------
+# Pick the global option that matches what the VPS does, so client_ip (what
+# dnscount records) stays the real visitor instead of the VPS:
+#
+# {
+# 	servers {
+# 		# VPS runs an HTTP reverse proxy: believe its X-Forwarded-For.
+# 		# Also add the range to dnscount serve -trusted-proxies.
+# 		trusted_proxies static 203.0.113.10/32
+#
+# 		# VPS forwards raw TCP (TLS end to end) with a PROXY protocol header.
+# 		# listener_wrappers {
+# 		# 	proxy_protocol {
+# 		# 		allow 203.0.113.10/32
+# 		# 	}
+# 		# 	tls
+# 		# }
+# 	}
+# }

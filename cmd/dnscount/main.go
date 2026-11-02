@@ -1,0 +1,362 @@
+// Command dnscount is a dumb simple hit counter and request/DNS logger.
+//
+//	dnscount serve          public counter + /ingest collector + localhost admin API
+//	dnscount syslog         receive UniFi remote syslog (DNS lookups, firewall logs)
+//	dnscount ingest-access  import nginx/apache/caddy access logs
+//	dnscount ingest-dns     import dnsmasq/UniFi/Pi-hole or AdGuard logs
+//	dnscount report         hits | dns | trips | trip <id>
+//	dnscount check          data sanity checks
+//	dnscount backup         timestamped copy of the database
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"dnscount/forensics"
+	"dnscount/hit"
+	"dnscount/ingest"
+	"dnscount/ingest/dns"
+	"dnscount/ingest/fw"
+	"dnscount/ingest/syslog"
+	"dnscount/server"
+	"dnscount/store"
+)
+
+const usage = `usage: dnscount <command> [flags]
+
+commands:
+  serve          public counter + /ingest collector + localhost admin API
+  syslog         receive UniFi remote syslog (DNS lookups, firewall logs)
+  ingest-access  import nginx/apache "combined" or caddy JSON access logs
+  ingest-dns     import dnsmasq (UniFi, Pi-hole), unifi (dnsmasq+firewall) or adguard logs
+  report         hits | dns | trips | trip <id>
+  check          run data sanity checks
+  backup         write a timestamped copy of the database to a directory
+
+run "dnscount <command> -h" for flags. The database defaults to $DNSCOUNT_DB or ./dnscount.db.
+`
+
+func main() {
+	log.SetFlags(log.LstdFlags)
+	if len(os.Args) < 2 {
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
+	}
+	cmds := map[string]func([]string) error{
+		"serve": serve, "syslog": syslogCmd, "ingest-access": ingestAccess,
+		"ingest-dns": ingestDNS, "report": report, "check": check, "backup": backup,
+	}
+	f, ok := cmds[os.Args[1]]
+	if !ok {
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
+	}
+	if err := f(os.Args[2:]); err != nil {
+		fmt.Fprintln(os.Stderr, "dnscount:", err)
+		os.Exit(1)
+	}
+}
+
+func dbFlag(fs *flag.FlagSet) *string {
+	def := os.Getenv("DNSCOUNT_DB")
+	if def == "" {
+		def = "dnscount.db"
+	}
+	return fs.String("db", def, "SQLite database path")
+}
+
+func serve(args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	db := dbFlag(fs)
+	addr := fs.String("addr", ":8080", "public listen address (counter + /ingest)")
+	adminAddr := fs.String("admin-addr", "127.0.0.1:8081", "admin API listen address; keep it on localhost")
+	token := fs.String("token", os.Getenv("DNSCOUNT_TOKEN"), "bearer token for /ingest (or $DNSCOUNT_TOKEN); empty disables /ingest")
+	trusted := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For is believed")
+	counterLimit := fs.Int("counter-limit", 30, "counter increments per IP per minute")
+	fs.Parse(args)
+
+	proxies, err := hit.ParsePrefixes(*trusted)
+	if err != nil {
+		return fmt.Errorf("-trusted-proxies: %w", err)
+	}
+	if host, _, _ := net.SplitHostPort(*adminAddr); !isLoopback(host) {
+		log.Printf("warning: admin API on %s has no auth and isn't on localhost", *adminAddr)
+	}
+	if *token == "" {
+		log.Printf("no -token: /ingest will reject everything (counter still works)")
+	}
+	st, err := store.Open(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	rec := forensics.New(st, os.Stderr)
+	defer rec.Close()
+	srv := server.New(server.Config{
+		Store: st, Token: *token, TrustedProxies: proxies, CounterPerMinute: *counterLimit,
+		OnTrip: rec.OnTrip, OnEnd: rec.OnEnd,
+	})
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go srv.Counter.Run(ctx)
+	go srv.Ingest.Run(ctx)
+	return runHTTP(ctx,
+		&http.Server{Addr: *addr, Handler: srv.Public(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second},
+		&http.Server{Addr: *adminAddr, Handler: srv.Admin(nil), ReadHeaderTimeout: 10 * time.Second},
+	)
+}
+
+func runHTTP(ctx context.Context, servers ...*http.Server) error {
+	errc := make(chan error, len(servers))
+	for _, s := range servers {
+		log.Printf("listening on %s", s.Addr)
+		go func() { errc <- s.ListenAndServe() }()
+	}
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, s := range servers {
+		s.Shutdown(sctx)
+	}
+	return nil
+}
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func syslogCmd(args []string) error {
+	fs := flag.NewFlagSet("syslog", flag.ExitOnError)
+	db := dbFlag(fs)
+	listen := fs.String("listen", "udp://:5514", "comma-separated udp://host:port and/or tcp://host:port")
+	allow := fs.String("allow", "", "comma-separated IPs/CIDRs allowed to send (your router); required")
+	raw := fs.String("raw", "", "directory to append every received line to (daily files)")
+	perMin := fs.Int("per-minute", 60000, "max lines per source per minute")
+	fs.Parse(args)
+
+	allowed, err := hit.ParsePrefixes(*allow)
+	if err != nil {
+		return fmt.Errorf("-allow: %w", err)
+	}
+	if *raw != "" {
+		if err := os.MkdirAll(*raw, 0o750); err != nil {
+			return err
+		}
+	}
+	st, err := store.Open(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	rec := forensics.New(st, os.Stderr)
+	defer rec.Close()
+	l, err := syslog.New(syslog.Config{
+		Store: st, Allow: allowed, RawDir: *raw, PerMinute: *perMin, OnTrip: rec.OnTrip, OnEnd: rec.OnEnd,
+	})
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				s := l.Stats()
+				log.Printf("syslog: %d lines, %d records, %d skipped, %d bad, %d dropped, %d not allowed",
+					s.Lines, s.Records, s.Skipped, s.Bad, s.Dropped, s.Rejected)
+			}
+		}
+	}()
+	return l.Listen(ctx, strings.Split(*listen, ","))
+}
+
+func ingestAccess(args []string) error {
+	fs := flag.NewFlagSet("ingest-access", flag.ExitOnError)
+	db := dbFlag(fs)
+	format := fs.String("format", "combined", "combined (nginx/apache) | caddy")
+	site := fs.String("site", "", "site name to record hits under (caddy defaults to the request host)")
+	count := fs.Bool("count", false, "also bump the site's public counter for each new hit")
+	follow := fs.Bool("follow", false, "keep reading as the file grows (like tail -f)")
+	fs.Parse(args)
+	if *site != "" && !hit.ValidSite(*site) {
+		return fmt.Errorf("-site must be [A-Za-z0-9._-]{1,64}")
+	}
+	var p ingest.LineParser
+	switch *format {
+	case "combined":
+		p = ingest.Combined{Site: *site}
+	case "caddy":
+		p = ingest.Caddy{Site: *site}
+	default:
+		return fmt.Errorf("unknown -format %q", *format)
+	}
+	return runIngest(*db, p, fs.Args(), *follow, func(r *ingest.Record) {
+		if r.Hit != nil {
+			r.Hit.Count = *count
+		}
+	})
+}
+
+func ingestDNS(args []string) error {
+	fs := flag.NewFlagSet("ingest-dns", flag.ExitOnError)
+	db := dbFlag(fs)
+	format := fs.String("format", "dnsmasq", "dnsmasq (UniFi, Pi-hole) | unifi (dnsmasq + firewall lines, e.g. syslog -raw files) | adguard")
+	follow := fs.Bool("follow", false, "keep reading as the file grows (like tail -f)")
+	fs.Parse(args)
+	var p ingest.LineParser
+	switch *format {
+	case "dnsmasq", "pihole":
+		p = dns.Dnsmasq{}
+	case "unifi":
+		p = ingest.Multi{dns.Dnsmasq{}, fw.IPTables{}}
+	case "adguard":
+		p = dns.AdGuard{}
+	default:
+		return fmt.Errorf("unknown -format %q", *format)
+	}
+	return runIngest(*db, p, fs.Args(), *follow, nil)
+}
+
+// runIngest feeds each file ("-" is stdin) through p into the store in
+// batches and prints a summary per file.
+func runIngest(dbPath string, p ingest.LineParser, files []string, follow bool, tweak func(*ingest.Record)) error {
+	if len(files) == 0 {
+		files = []string{"-"}
+	}
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	for _, name := range files {
+		var r io.Reader = os.Stdin
+		if name != "-" {
+			f, err := os.Open(name)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			r = f
+			if follow {
+				r = &tailReader{path: name, f: f, poll: time.Second}
+			}
+		}
+		var batch []ingest.Record
+		inserted := 0
+		flush := func() error {
+			n, err := st.InsertRecords(batch)
+			inserted += n
+			batch = batch[:0]
+			return err
+		}
+		stats, err := ingest.Run(r, p, time.Now(), func(rec ingest.Record) error {
+			if tweak != nil {
+				tweak(&rec)
+			}
+			if batch = append(batch, rec); len(batch) >= 500 || follow {
+				return flush()
+			}
+			return nil
+		})
+		if ferr := flush(); err == nil {
+			err = ferr
+		}
+		fmt.Fprintf(os.Stderr, "%s: %d lines, %d records (%d new rows), %d skipped, %d bad\n",
+			name, stats.Lines, stats.Records, inserted, stats.Skipped, stats.Bad)
+		if err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// tailReader turns EOF into "wait and try again" for -follow. It reopens
+// the path when the file is rotated (renamed away and recreated, or
+// truncated in place), so a log roller like Caddy's doesn't leave us
+// reading a dead file forever.
+type tailReader struct {
+	path string
+	f    *os.File
+	poll time.Duration
+}
+
+func (t *tailReader) Read(p []byte) (int, error) {
+	for {
+		n, err := t.f.Read(p)
+		if n > 0 || !errors.Is(err, io.EOF) {
+			return n, err
+		}
+		if t.rotated() {
+			if f, err := os.Open(t.path); err == nil {
+				t.f.Close()
+				t.f = f
+				continue
+			}
+		}
+		time.Sleep(t.poll)
+	}
+}
+
+func (t *tailReader) rotated() bool {
+	cur, err := os.Stat(t.path)
+	if err != nil {
+		return false // mid-rotation; the new file isn't there yet
+	}
+	old, err := t.f.Stat()
+	if err != nil {
+		return false
+	}
+	if !os.SameFile(cur, old) {
+		return true
+	}
+	pos, err := t.f.Seek(0, io.SeekCurrent)
+	return err == nil && cur.Size() < pos
+}
+
+func check(args []string) error {
+	fs := flag.NewFlagSet("check", flag.ExitOnError)
+	db := dbFlag(fs)
+	fs.Parse(args)
+	st, err := store.Open(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	problems, err := st.Check(time.Now())
+	if err != nil {
+		return err
+	}
+	if len(problems) == 0 {
+		fmt.Println("ok: no data problems found")
+		return nil
+	}
+	for _, p := range problems {
+		fmt.Println("problem:", p)
+	}
+	return fmt.Errorf("%d problem(s)", len(problems))
+}

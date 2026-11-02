@@ -1,0 +1,146 @@
+dnscount API
+============
+
+Two listeners:
+
+  PUBLIC  dnscount serve -addr        (default :8080; usually behind Caddy)
+          counter + /ingest. Safe to expose.
+  ADMIN   dnscount serve -admin-addr  (default 127.0.0.1:8081)
+          research API. NO AUTH: keep it on localhost, reach it over SSH:
+            ssh -L 8081:127.0.0.1:8081 you@host
+
+This page: GET /api on the admin listener.
+
+Conventions
+-----------
+  site    [A-Za-z0-9._-], 1-64 characters
+  since   how far back to look. 24h, 90m, 7d, an RFC 3339 time
+          (2026-10-27T00:00:00Z), or a date (2026-10-27, local time).
+          Omitted = all time.
+  limit   max rows. Omitted or 0 = 100 (25 for the /top endpoints).
+  times   JSON times are UTC, RFC 3339 with nanoseconds.
+  errors  plain text body. 400 = bad parameter, 404 = no such thing,
+          500 = server error (including an unknown by= value).
+
+
+PUBLIC
+======
+
+GET /counter.svg?site=NAME[&noinc=1]
+  Counts one visit for NAME and returns the counter image (image/svg+xml).
+  noinc=1: return the image without counting.
+  Each IP counts 30 times a minute (-counter-limit). Past that, the image
+  still shows but the count doesn't go up.
+  400 if site is missing or invalid.
+
+GET /counter.txt?site=NAME[&noinc=1]
+  Same as counter.svg (it counts too, unless noinc=1), but returns the
+  number as text/plain.
+
+GET /counter.js
+  Script that puts the counter image where its tag is:
+    <script src="https://HOST/counter.js" data-site="NAME"></script>
+  data-site defaults to the page's hostname.
+
+POST /ingest
+  Where Go apps send hits (middleware.NewRemoteSink does this for you).
+  Auth:   Authorization: Bearer <token>   (-token or $DNSCOUNT_TOKEN;
+          no token configured = everything is rejected)
+  Body:   JSON, max 1 MB, max 1000 hits. Unknown fields are an error.
+    {"hits": [{
+      "ts":         "2026-10-27T18:00:00Z",  required; not before 2000,
+                                             at most 5 minutes in the future
+      "site":       "blog",                  required
+      "client_ip":  "203.0.113.9",           required, a valid IP
+      "source":     "middleware",
+      "method":     "GET",
+      "host":       "blog.example.com",
+      "path":       "/post/1",
+      "query":      "ref=x",
+      "status":     200,                     0 or 100-599
+      "bytes":      1234,
+      "user_agent": "...",
+      "referer":    "...",
+      "forwarded_for": "...",
+      "id":         "...",                   optional dedup key; a repeated id
+                                             is a duplicate, not a new hit
+      "count":      true                     also add 1 to the site's counter
+    }]}
+  Answers:
+    200  {"accepted": N, "duplicates": M}
+    400  bad JSON, too many hits, or any invalid hit. The whole batch is
+         rejected and nothing is stored; the body lists what was wrong.
+    401  missing or wrong token
+    405  not a POST
+    413  body over 1 MB
+    429  this IP tripped the breaker (600 requests or 10 bad ones in a
+         minute). Retry-After says how many seconds until the cooldown
+         (5 minutes) ends. Each trip is recorded: see /api/trips.
+
+
+ADMIN (all GET, all JSON)
+=========================
+
+/api/hits?[site=][&ip=][&since=][&limit=]
+  Recent hits, newest first.
+  [{"id","ts","site","source","client_ip","forwarded_for","method","host",
+    "path","query","status","bytes","user_agent","referer"}]
+  query and referer: values of credential-looking parameters (api_key,
+  ApiKey, token, access_token, X-Emby-Token, ...) are stored as REDACTED.
+  source is one of:
+    counter     counted by the counter endpoints
+    middleware  sent to /ingest by a Go app
+    caddy       read from a Caddy JSON access log
+    access-log  read from an nginx/apache access log
+
+/api/top?by=ip|path|ua|site|host|status|method|referer[&site=][&since=][&limit=25]
+  Hit counts grouped by one field, biggest first. by defaults to ip.
+  [{"key": "203.0.113.9", "count": 42}]
+
+/api/dns?domain=NAME[&since=]
+  Which clients looked up NAME (and its subdomains), plus firewall-logged
+  connections to the addresses it resolved to.
+  {"lookups":     [{"client_ip","client_name","count","first","last"}],
+   "connections": [{"client_ip","dst_ip","dst_port","proto","action",
+                    "count","first","last"}]}
+
+/api/dns?client=IP[&since=][&limit=]
+  What one client looked up and connected to.
+  {"lookups":     [{"domain","count","first","last"}],
+   "connections": [ same as above ]}
+  400 if neither domain= nor client= is given.
+
+/api/dns/top?by=domain|client[&since=][&limit=25]
+  Lookup counts grouped by domain or by client.
+  [{"key": "example.com", "count": 7}]
+
+/api/trips?[ip=][&breaker=counter|ingest|syslog|syslog-not-allowed][&since=][&limit=]
+  Circuit-breaker trips, newest first (without the detail blob).
+  [{"id","tripped_at","cooldown_until","ended_at","breaker","key","reason",
+    "window_events","window_bad","suppressed_during_cooldown",
+    "first_seen_in_window"}]
+  key is who tripped it (an IP, or "*" when too many IPs were tracked).
+  reason: rate (too many requests), map_full, or the kind of bad request
+          that tipped it over: bad_token | malformed | oversize | not_allowed
+
+/api/trips/{id}
+  One trip, plus "detail": everything recorded about the offender. That's
+  request headers (Authorization/Cookie stored as a hash and length, never
+  the value), body samples, parse errors, the last events, samples from
+  during cooldown, the rate curve, reverse DNS, and what was already known
+  about that IP.
+  404 if there's no such trip.
+
+/api/health
+  Breaker state and data sanity checks.
+  {"breakers": [{"name","trips","suppressed","tripped_now","keys"}],
+   "data_problems": null or ["..."]}
+
+
+Same data from the command line
+-------------------------------
+  dnscount report hits -top ip -since 24h
+  dnscount report dns -domain example.com
+  dnscount report trips
+  dnscount report trip <id>
+  dnscount check

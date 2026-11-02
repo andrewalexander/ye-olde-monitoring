@@ -1,0 +1,58 @@
+# Local proof of the whole counter/hits path. `docker compose up --build` (or `tilt up`), then:
+#   http://localhost:8000          test page behind Caddy (counter + links that make hits)
+#   http://localhost:8001          examples/app: Go middleware shipping hits to /ingest
+#   http://localhost:8081/api/...  admin API (published on 127.0.0.1 only)
+#   sh scripts/smoke.sh            scripted check of all of it
+#
+# Same shape as deploy/: Caddy in front, dnscount serve on 8080, a second
+# dnscount process tailing Caddy's JSON access log into the same SQLite file.
+name: dnscount
+
+x-dnscount: &dnscount
+  image: dnscount:local
+  volumes:
+    - data:/data # a named volume, not a Mac bind mount: SQLite WAL locking needs a real Linux fs
+
+services:
+  dnscount:
+    <<: *dnscount
+    build: .
+    environment:
+      DNSCOUNT_TOKEN: ${DNSCOUNT_TOKEN:-local-dev-token}
+    # Admin on 0.0.0.0 inside the container so Caddy can reach it; the host
+    # only gets it on 127.0.0.1 via Caddy's :8081 listener. (Logs a warning.)
+    command: ["serve", "-addr", ":8080", "-admin-addr", ":8081",
+              "-trusted-proxies", "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"]
+
+  caddy-log:
+    <<: *dnscount
+    depends_on: [dnscount, caddy]
+    volumes:
+      - data:/data
+      - caddy-logs:/var/log/caddy:ro
+    command: ["ingest-access", "-format", "caddy", "-follow", "/var/log/caddy/access.log"]
+    restart: unless-stopped # retries until Caddy has created the log
+
+  caddy:
+    image: caddy:2.10
+    depends_on: [dnscount]
+    ports:
+      - "8000:80"
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - ./deploy/local/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/local/site:/srv:ro
+      - caddy-logs:/var/log/caddy
+
+  app:
+    <<: *dnscount
+    depends_on: [dnscount]
+    entrypoint: ["/usr/local/bin/example-app"]
+    command: ["-addr", ":8000", "-collector", "http://dnscount:8080/ingest",
+              "-token", "${DNSCOUNT_TOKEN:-local-dev-token}", "-counter", "http://localhost:8000"]
+    ports:
+      - "8001:8000"
+
+volumes:
+  data:
+  caddy-logs:

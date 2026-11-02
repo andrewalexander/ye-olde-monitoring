@@ -1,0 +1,16 @@
+[Unit]
+Description=dnscount: daily database backup (keeps the last 7)
+
+[Service]
+Type=oneshot
+User=dnscount
+Group=dnscount
+EnvironmentFile=/etc/dnscount/dnscount.env
+ExecStart=/usr/local/bin/dnscount backup -keep 7 /var/lib/dnscount/backups
+StateDirectory=dnscount
+UMask=0027
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes

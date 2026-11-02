@@ -1,0 +1,17 @@
+Oct 27 11:59:00 UDM-Pro dnsmasq[4242]: started, version 2.89 cachesize 150
+Oct 27 11:59:00 UDM-Pro dnsmasq-dhcp[4242]: DHCPACK(br0) 192.168.1.5 aa:bb:cc:dd:ee:ff laptop
+Oct 27 12:00:01 UDM-Pro dnsmasq[4242]: query[A] example.com from 192.168.1.5
+Oct 27 12:00:01 UDM-Pro dnsmasq[4242]: forwarded example.com to 1.1.1.1
+Oct 27 12:00:01 UDM-Pro dnsmasq[4242]: reply example.com is 93.184.216.34
+Oct 27 12:00:05 UDM-Pro dnsmasq[4242]: query[A] example.com from 192.168.1.5
+Oct 27 12:00:05 UDM-Pro dnsmasq[4242]: query[A] example.com from 192.168.1.5
+Oct 27 12:00:05 UDM-Pro dnsmasq[4242]: cached example.com is 93.184.216.34
+Oct 27 12:00:05 UDM-Pro dnsmasq[4242]: cached example.com is 93.184.216.34
+Oct 27 13:30:00 UDM-Pro dnsmasq[4242]: query[AAAA] EXAMPLE.com. from 192.168.1.7
+Oct 27 13:30:00 UDM-Pro dnsmasq[4242]: reply example.com is 2606:2800:220:1:248:1893:25c8:1946
+Oct 27 14:00:00 UDM-Pro dnsmasq[4242]: query[A] www.example.com from 192.168.1.9
+Oct 27 14:00:00 UDM-Pro dnsmasq[4242]: reply www.example.com is <CNAME>
+Oct 27 14:00:02 UDM-Pro dnsmasq[4242]: query[A] ads.tracker.net from 192.168.1.5
+Oct 27 14:00:02 UDM-Pro dnsmasq[4242]: config ads.tracker.net is NXDOMAIN
+Oct 27 14:00:03 UDM-Pro dnsmasq[4242]: query[A] notexample.com from 192.168.1.5
+Oct 27 14:00:04 UDM-Pro dnsmasq[4242]: query[A] broken.example

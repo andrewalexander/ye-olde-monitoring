@@ -1,0 +1,46 @@
+[Unit]
+Description=dnscount: record every request Caddy serves (tails its JSON access log)
+Wants=dnscount-serve.service
+After=dnscount-serve.service caddy.service
+
+[Service]
+User=dnscount
+Group=dnscount
+# The dnscount user is in the caddy group (install.sh), and Caddy writes the
+# log with "mode 640" (see deploy/Caddyfile.example).
+EnvironmentFile=/etc/dnscount/dnscount.env
+ExecStart=/usr/local/bin/dnscount ingest-access -format caddy -follow ${DNSCOUNT_CADDY_LOG}
+Restart=always
+RestartSec=5
+StateDirectory=dnscount
+StateDirectoryMode=0750
+UMask=0027
+
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+# Refuse (not kill) anything else; the Go runtime probes some syscalls.
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

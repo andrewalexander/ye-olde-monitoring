@@ -1,0 +1,7 @@
+dist/
+raw/
+result
+result-*
+*.db
+*.db-*
+.DS_Store

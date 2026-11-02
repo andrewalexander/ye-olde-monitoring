@@ -1,0 +1,44 @@
+[Unit]
+Description=dnscount: receive the router's syslog (DNS lookups + firewall lines)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=dnscount
+Group=dnscount
+EnvironmentFile=/etc/dnscount/dnscount.env
+ExecStart=/usr/local/bin/dnscount syslog $DNSCOUNT_SYSLOG_FLAGS
+Restart=always
+RestartSec=2
+StateDirectory=dnscount
+StateDirectoryMode=0750
+UMask=0027
+
+# Hardening: 5514 is >1024 and it only needs its state dir (and -raw under it).
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+# Refuse (not kill) anything else; the Go runtime probes some syscalls.
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

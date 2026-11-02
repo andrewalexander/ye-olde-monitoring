@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dnscount test page</title>
+<style>
+  body { background: #000080; color: #fff; font-family: "Times New Roman", serif; margin: 0 auto; max-width: 960px; padding: 16px; }
+  h1 { font-family: "Comic Sans MS", cursive; color: #ff0; text-align: center; }
+  h2 { color: #0ff; border-bottom: 2px ridge #c0c0c0; }
+  a { color: #ff0; }
+  .box { background: #c0c0c0; color: #000; border: 3px outset #fff; padding: 8px 12px; margin: 12px 0; }
+  .center { text-align: center; }
+  code, pre { font-family: "Courier New", monospace; }
+  table { border-collapse: collapse; width: 100%; font: 13px "Courier New", monospace; }
+  th, td { border: 1px solid #808080; padding: 2px 4px; text-align: left; vertical-align: top; }
+  th { background: #000080; color: #fff; }
+  .wrap { overflow-x: auto; }
+  .muted { color: #444; }
+  .err { color: #a00; }
+  pre.diagram { background: #000; color: #3f3; padding: 8px; overflow-x: auto; font-size: 13px; }
+  pre { overflow-x: auto; }
+  .note { color: #222; }
+  dd { margin: 0 0 6px 16px; }
+  marquee { color: #0f0; font-family: "Courier New", monospace; }
+</style>
+</head>
+<body>
+<h1>Welcome to my homepage!</h1>
+<marquee>*** under construction *** dnscount local test *** under construction ***</marquee>
+
+<div class="box">
+  <p><b>What is this?</b> A test page for the local <code>docker compose</code> / <code>tilt up</code> stack. Every part of it
+     uses dnscount the way a real site would. The table at the bottom shows each request landing in the database, so you
+     can see all three ways hits get recorded.</p>
+<pre class="diagram">
+ your browser
+     |
+     v
+ Caddy :8000 --- /counter.*, /ingest ---> dnscount serve :8080 ----+
+     |                                    (counter, /ingest)       |
+     | everything else: this page                                  v
+     |                                                       SQLite /data
+     +-- JSON access log --> dnscount ingest-access -follow -------^
+                                                                   |
+ example app :8001 -- Go middleware -- POST /ingest (token) -------+
+
+ this page's table <-- Caddy :8081 (localhost only) <-- admin API :8081
+</pre>
+  <p class="note">Files: <code>deploy/local/site/index.html</code> (this page), <code>deploy/local/Caddyfile</code>,
+     <code>docker-compose.yml</code>. Scripted version of everything below: <code>make smoke</code>.</p>
+</div>
+
+<h2>1. The counter</h2>
+<div class="box center">
+  <p>You are visitor number</p>
+  <!-- The real thing: counts this page load once per load (30/min per IP). -->
+  <script src="/counter.js" data-site="local-test"></script>
+  <p class="muted">&lt;script src="/counter.js" data-site="local-test"&gt;&lt;/script&gt;</p>
+</div>
+<div class="box">
+  <p><b>How it works:</b> that one script tag is all a site needs. <code>counter.js</code> adds an
+     <code>&lt;img src="/counter.svg?site=local-test"&gt;</code> where the tag sits. Each load of that image
+     adds 1 to the <code>local-test</code> counter and stores a hit with source <code>counter</code>.</p>
+  <p><b>Limits:</b> each IP gets 30 counts a minute. Past that the image still shows, but the number stops going up,
+     so holding down reload won't inflate it. <code>site</code> must match <code>[A-Za-z0-9._-]</code>, up to 64 characters.</p>
+</div>
+
+<h2>2. Reading it without counting</h2>
+<div class="box">
+  <p>Image with <code>&amp;noinc=1</code>: <img id="noinc" alt="counter (not counted)" src="/counter.svg?site=local-test&amp;noinc=1"></p>
+  <p>Plain number from <code>/counter.txt?site=local-test&amp;noinc=1</code>: <b id="txt">…</b>
+     <button id="refresh">refresh</button></p>
+  <p class="note">Add <code>noinc=1</code> to show the number somewhere without counting a visit. Without it,
+     <code>counter.txt</code> counts too, the same as the image. Pressing refresh should leave the number unchanged.</p>
+</div>
+
+<h2>3. Make some hits</h2>
+<div class="box">
+  <p class="note">Each link below shows up in the table in section 4. The <i>source</i> column says which path recorded it.</p>
+  <ul>
+    <li><a href="/">reload this page</a>: the counter goes up by 1 (source <code>counter</code>). Caddy also logs the page,
+        <code>counter.js</code> and <code>counter.svg</code> requests (source <code>caddy</code>).</li>
+    <li><a href="/no-such-page">a 404</a>: Caddy logs it with status 404. That's how you'd spot scanners probing for
+        <code>/wp-login.php</code> and similar paths.</li>
+    <li><a href="/?utm_source=test&amp;q=hello">a page with a query string</a>: the query is stored separately from the path.</li>
+    <li><a href="/counter.svg?site=another-site">count a different site</a>: each <code>site</code> has its own counter.
+        Compare <code>report hits -top site</code>.</li>
+    <li><a href="http://localhost:8001/">the example Go app</a> (port 8001): it doesn't go through Caddy.
+        <code>middleware.Wrap</code> records each request and posts it in batches to <code>/ingest</code> with a
+        bearer token (source <code>middleware</code>, site <code>example</code>).</li>
+    <li><button id="garbage">POST 12 garbage requests to /ingest (no token)</button> <span id="garbage-out"></span><br>
+        You should see ten <code>401</code>s, then <code>429</code>. After 10 bad requests in a minute, the ingest
+        circuit breaker blocks your IP for a cooldown. One trip row is saved with everything known about you: headers
+        (secrets hashed), body samples, the request rate and reverse DNS. See <code>report trips</code>, then
+        <code>report trip &lt;id&gt;</code>. Press it again while cooling down and you get only <code>429</code>s.</li>
+  </ul>
+</div>
+
+<h2>4. Recent hits (admin API)</h2>
+<div class="box">
+  <p class="note">From <code>http://localhost:8081/api/hits?since=1h</code>, refreshed every 3s. Hits from Caddy's log
+     show up about a second after the request, because the tailer checks the file once a second. Breaker trips in the last hour: <b id="trips">?</b></p>
+  <div class="wrap">
+    <table>
+      <thead><tr><th>time (UTC)</th><th>source</th><th>site</th><th>client</th><th>request</th><th>status</th><th>user agent</th></tr></thead>
+      <tbody id="hits"><tr><td colspan="7">loading…</td></tr></tbody>
+    </table>
+  </div>
+  <dl class="note">
+    <dt><b>source</b></dt>
+    <dd><code>counter</code>: counted by <code>dnscount serve</code>.
+        <code>caddy</code>: read from Caddy's JSON access log.
+        <code>middleware</code>: sent by a Go app.</dd>
+    <dt><b>site</b></dt>
+    <dd>The counter's <code>site=</code> value, the middleware's <code>Options.Site</code>, or for Caddy the request
+        host (<code>localhost</code> here).</dd>
+    <dt><b>client</b></dt>
+    <dd>The visitor's IP. Caddy sits in front, so dnscount takes it from <code>X-Forwarded-For</code>, but only
+        because the request came from a trusted proxy (<code>-trusted-proxies</code>). Here it's your Mac as Docker
+        sees it, usually the network gateway.</dd>
+  </dl>
+  <p class="note">Every endpoint, public and admin, is described in plain text at
+     <a href="http://localhost:8081/api">localhost:8081/api</a>.</p>
+  <p class="note">The admin API has no auth. In production it only listens on localhost (reach it with an SSH tunnel).
+     The <code>:8081</code> Caddy listener this page uses exists only in the local Caddyfile.</p>
+</div>
+
+<h2>5. Going further</h2>
+<div class="box">
+<pre>docker compose exec dnscount dnscount report hits -top ip -since 1h
+docker compose exec dnscount dnscount report hits -top path
+docker compose exec dnscount dnscount report hits -ip &lt;client from the table&gt;
+docker compose exec dnscount dnscount report trips
+docker compose exec dnscount dnscount check        # data sanity checks
+curl -s localhost:8081/api                         # plain-text reference for every endpoint
+curl -s localhost:8081/api/health                  # breaker state + check results
+make down                                          # stop and wipe the local data</pre>
+</div>
+
+<p class="center muted" style="color:#c0c0c0">Best viewed in Netscape Navigator 4.0 at 800x600</p>
+
+<script>
+// Everything rendered here came from strangers' requests: textContent only.
+const ADMIN = "http://localhost:8081";
+
+async function refreshTxt() {
+  const r = await fetch("/counter.txt?site=local-test&noinc=1", { cache: "no-store" });
+  document.getElementById("txt").textContent = (await r.text()).trim();
+  document.getElementById("noinc").src = "/counter.svg?site=local-test&noinc=1&t=" + Date.now();
+}
+
+function cell(tr, text) {
+  const td = document.createElement("td");
+  td.textContent = text ?? "";
+  tr.appendChild(td);
+}
+
+async function refreshHits() {
+  const body = document.getElementById("hits");
+  try {
+    const [hits, trips] = await Promise.all([
+      fetch(ADMIN + "/api/hits?since=1h&limit=25").then(r => r.json()),
+      fetch(ADMIN + "/api/trips?since=1h").then(r => r.json()),
+    ]);
+    document.getElementById("trips").textContent = (trips || []).length;
+    body.replaceChildren();
+    for (const h of hits || []) {
+      const tr = document.createElement("tr");
+      cell(tr, h.ts.replace("T", " ").slice(0, 19));
+      cell(tr, h.source);
+      cell(tr, h.site);
+      cell(tr, h.client_ip);
+      cell(tr, h.method + " " + h.path + (h.query ? "?" + h.query : ""));
+      cell(tr, h.status);
+      cell(tr, h.user_agent);
+      body.appendChild(tr);
+    }
+    if (!body.children.length) body.innerHTML = '<tr><td colspan="7">no hits yet</td></tr>';
+  } catch (e) {
+    body.innerHTML = '<tr><td colspan="7" class="err">admin API not reachable on localhost:8081</td></tr>';
+  }
+}
+
+document.getElementById("garbage").onclick = async () => {
+  const codes = [];
+  for (let i = 0; i < 12; i++) {
+    const r = await fetch("/ingest", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{not json" + i });
+    codes.push(r.status);
+  }
+  document.getElementById("garbage-out").textContent = "→ " + codes.join(" ");
+  refreshHits();
+};
+
+document.getElementById("refresh").onclick = refreshTxt;
+refreshTxt();
+refreshHits();
+setInterval(refreshHits, 3000);
+</script>
+</body>
+</html>

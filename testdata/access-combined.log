@@ -1,0 +1,6 @@
+203.0.113.9 - - [27/Oct/2026:12:00:01 -0700] "GET /index.html?ref=x HTTP/1.1" 200 512 "https://google.com/" "Mozilla/5.0"
+203.0.113.9 - - [27/Oct/2026:12:00:02 -0700] "GET /about HTTP/1.1" 200 100 "-" "Mozilla/5.0"
+198.51.100.4 - - [27/Oct/2026:12:01:00 -0700] "\x16\x03\x01\x00\xA5\x01\x00" 400 157 "-" "-"
+198.51.100.4 - - [27/Oct/2026:12:01:01 -0700] "GET /wp-login.php HTTP/1.1" 404 0 "-" "zgrab/0.x"
+198.51.100.4 - - [27/Oct/2026:12:01:02 -0700] "POST /cgi-bin/luci HTTP/1.1" 404 0 "-" "Mozilla/5.0 \"quoted\""
+garbage line

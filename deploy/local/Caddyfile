@@ -1,0 +1,39 @@
+# Local compose only. Mirrors deploy/Caddyfile.example, plus an admin
+# listener so the test page can show recent hits.
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	log {
+		output file /var/log/caddy/access.log {
+			mode 644 # the dnscount container runs as a different uid
+		}
+		format json
+	}
+
+	handle /counter.* {
+		reverse_proxy dnscount:8080
+	}
+
+	@dnscount_ingest {
+		path /ingest
+		remote_ip private_ranges
+	}
+	handle @dnscount_ingest {
+		reverse_proxy dnscount:8080
+	}
+
+	handle {
+		root * /srv
+		file_server
+	}
+}
+
+# Admin API, published to the host on 127.0.0.1:8081 only (docker-compose.yml).
+# Never add this to a public Caddyfile: the admin API has no auth.
+:8081 {
+	header Access-Control-Allow-Origin "http://localhost:8000"
+	reverse_proxy dnscount:8081
+}
