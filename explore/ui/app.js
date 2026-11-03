@@ -100,6 +100,11 @@ function tags(list) {
   if (!list || !list.length) return document.createTextNode("");
   return el("span", { class: "tags" }, list.map((t) => el("span", { class: "tag", text: String(t).replace(/^feed:/, "") })));
 }
+// How a request addressed us: by hostname, or by bare IP (usually a scanner).
+function hostKind(k) {
+  if (!k) return document.createTextNode("");
+  return el("span", { class: k === "ip" ? "badge v-suspicious" : "", text: k === "ip" ? "bare IP" : "hostname", title: k === "ip" ? "Host header was an IP address: typical of scanners sweeping addresses" : "Host header was a hostname" });
+}
 function asnText(r) {
   if (!r || !r.asn) return "";
   return `AS${r.asn}`;
@@ -178,7 +183,8 @@ const LIST_VIEWS = {
       col("Verdict", "verdict", "verdict"), col("IP", "ip", "ip"), col("Feeds", "feeds", "tags"),
       col("AS", "asn", "text", { formatter: (c) => document.createTextNode(asnText(c.getRow().getData())) }),
       col("Owner", "as_owner"), col("CC", "country"),
-      col("Hits", "hits", "num"), col("4xx", "errors_4xx", "num"), col("Bans", "bans", "num"),
+      col("Hits", "hits", "num"), col("By name", "hits_by_name", "num"), col("By IP", "hits_by_ip", "num"),
+      col("4xx", "errors_4xx", "num"), col("Bans", "bans", "num"),
       col("Leaks", "leaks", "leak"), col("Alerts", "alerts_allowed", "num"), col("Blocked", "alerts_blocked", "num"),
       col("Trips", "trips", "num"), col("Sites", "sites", "list"), col("First", "first", "time"), col("Last", "last", "time"),
     ],
@@ -231,11 +237,11 @@ const LIST_VIEWS = {
   },
   hits: {
     title: "Hits",
-    lede: "Requests to our sites, newest first.",
-    url: "/api/hits", options: ["status"],
+    lede: "Requests to our sites, newest first. Via says whether the client asked for us by hostname or by bare IP; scanners sweeping addresses use the IP.",
+    url: "/api/hits", options: ["status", "host_kind"],
     columns: () => [
       col("Time", "ts", "time"), col("Site", "site"), col("Client", "client_ip", "ip"), col("Method", "method"),
-      col("Host", "host"), col("Path", "path", "text", { maxWidth: 420 }), col("Query", "query", "text", { maxWidth: 240 }),
+      col("Host", "host"), col("Via", "host_kind", "text", { formatter: (c) => hostKind(c.getValue()) }), col("Path", "path", "text", { maxWidth: 420 }), col("Query", "query", "text", { maxWidth: 240 }),
       col("Status", "status", "num"), col("Bytes", "bytes", "bytes"), col("User agent", "user_agent", "text", { maxWidth: 320 }),
       col("Referer", "referer", "text", { maxWidth: 240 }),
     ],
@@ -310,6 +316,11 @@ function optionControls(view, def, q) {
         [["", "any"], ["allowed", "allowed"], ["blocked", "blocked"]].map(([v, t]) => el("option", { value: v, text: t })));
       s.value = q.get("action") || "";
       box.append(el("label", {}, "action ", s));
+    } else if (o === "host_kind") {
+      const s = el("select", { onchange: (e) => set("host_kind", e.target.value) },
+        [["", "any"], ["name", "hostname"], ["ip", "bare IP"]].map(([v, t]) => el("option", { value: v, text: t })));
+      s.value = q.get("host_kind") || "";
+      box.append(el("label", {}, "addressed by ", s));
     } else if (o === "status") {
       const i = el("input", { type: "text", size: 6, placeholder: "404, 4xx", value: q.get("status") || "" });
       i.addEventListener("change", () => set("status", i.value.trim()));

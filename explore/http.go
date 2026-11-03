@@ -71,6 +71,13 @@ func (x *Explorer) Handler() http.Handler {
 		return out, err
 	})
 
+	// Hits say whether the client addressed us by name or by bare IP.
+	routes["GET /api/hits"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
+		hits, err := st.Hits(store.HitFilter{Site: p.Str("site"), IP: p.Str("ip"), Status: p.Str("status"),
+			HostKind: p.Str("host_kind"), Since: p.Since(), Limit: p.Int("limit")})
+		return store.WithHostKind(hits), err
+	})
+
 	list := func(p *server.Params) store.ListQuery {
 		return store.ListQuery{Since: p.SinceOr("7d"), Flagged: p.Bool("flagged"), Order: p.Str("order"), Limit: p.Int("limit")}
 	}

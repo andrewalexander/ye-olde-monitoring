@@ -95,6 +95,12 @@ func TestExplorerEndToEnd(t *testing.T) {
 
 	// Attacker-controlled strings come back as JSON strings, never raw HTML.
 	_, body = get(t, h, "/api/hits")
+	if !strings.Contains(body, `"host_kind": ""`) {
+		t.Errorf("hits lack host_kind: %s", body)
+	}
+	if resp, _ := get(t, h, "/api/hits?host_kind=sideways"); resp.StatusCode != 400 {
+		t.Errorf("bad host_kind = %d", resp.StatusCode)
+	}
 	if strings.Contains(body, "<script>") || !strings.Contains(body, "\\u003cscript\\u003e") {
 		t.Errorf("hit path not escaped: %s", body)
 	}

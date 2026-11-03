@@ -249,6 +249,9 @@ func TestFlaggedInAndOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if in[0].ByName != 1 || in[0].ByIP != 0 {
+		t.Errorf("by name / by IP = %d / %d", in[0].ByName, in[0].ByIP)
+	}
 	if len(in) == 0 || in[0].IP != "203.0.113.66" || in[0].Verdict != enrich.Malicious {
 		t.Errorf("flagged IP isn't first: %+v", in)
 	}

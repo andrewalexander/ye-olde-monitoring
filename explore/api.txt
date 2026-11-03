@@ -15,6 +15,10 @@ Rows that carry an address or domain also carry what's known about it:
   "feeds"     those lists, as feed:<name>
   "asn", "as_owner", "country"   from iptoasn
 
+Hits gain "host_kind": "name" (the Host header was a hostname), "ip" (a
+bare IP address, typical of scanners sweeping addresses) or "" (none), and
+/api/hits takes host_kind=name|ip to filter on it.
+
 Shared with the admin API (alerts and bans gain the fields above):
   /api/hits  /api/top  /api/dns  /api/dns/top  /api/alerts  /api/bans
   /api/trips  /api/trips/{id}
@@ -23,7 +27,7 @@ Shared with the admin API (alerts and bans gain the fields above):
   Public addresses that hit our sites, were banned, raised IDS alerts or
   tripped a breaker. LAN devices (any address that used the router's DNS)
   never appear.
-  [{"ip","hits","errors_4xx","first","last","sites","bans","leaks",
+  [{"ip","hits","hits_by_name","hits_by_ip","errors_4xx","first","last","sites","bans","leaks",
     "alerts_allowed","alerts_blocked","trips", ...intel}]
 
 /api/ip/{ip}?[since=30d]
