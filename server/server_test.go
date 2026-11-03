@@ -332,8 +332,22 @@ func TestAdminAPI(t *testing.T) {
 	if code, body := get("/api/top?by=ip"); code != 200 || !strings.Contains(body, `"key": "203.0.113.50"`) || !strings.Contains(body, `"count": 2`) {
 		t.Errorf("top: %d %s", code, body)
 	}
-	if code, _ := get("/api/top?by=password"); code != 500 && code != 400 {
-		t.Errorf("bad by = %d", code)
+	for _, url := range []string{"/api/top?by=password", "/api/dns/top?by=password", "/api/top?order=sideways"} {
+		if code, _ := get(url); code != 400 {
+			t.Errorf("%s = %d, want 400", url, code)
+		}
+	}
+	if code, body := get("/api/top?by=ip&order=bottom&ip=192.0.2.99"); code != 200 || strings.Contains(body, "203.0.113.50") {
+		t.Errorf("ip filter: %d %s", code, body)
+	}
+	if code, body := get("/api/top?by=ip,method"); code != 200 || !strings.Contains(body, `"keys"`) {
+		t.Errorf("by= list: %d %s", code, body)
+	}
+	if code, _ := get("/api/top?by=ip,password"); code != 400 {
+		t.Errorf("bad by= in a list = %d", code)
+	}
+	if code, body := get("/api/top?by=ip&order=new"); code != 200 || !strings.Contains(body, `"first"`) {
+		t.Errorf("order=new: %d %s", code, body)
 	}
 	if code, _ := get("/api/hits?since=nonsense"); code != 400 {
 		t.Errorf("bad since = %d", code)

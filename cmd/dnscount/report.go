@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -14,8 +15,8 @@ import (
 )
 
 const reportUsage = `usage:
-  dnscount report hits  [-top ip|path|ua|site|host|status|method|referer] [-site s] [-ip x] [-since 24h] [-limit n]
-  dnscount report dns   -domain example.com | -client 192.168.1.5 | -top domain|client  [-since 7d]
+  dnscount report hits  [-top|-bottom|-new ip|path|ua|site|host|status|method|referer[,...]] [-site s] [-ip x] [-since 24h] [-limit n]
+  dnscount report dns   -domain example.com | -client 192.168.1.5 | -top|-bottom|-new domain|client[,...]  [-since 7d]
   dnscount report trips [-since 24h] [-ip x] [-breaker name]
   dnscount report trip  <id>
 `
@@ -30,19 +31,30 @@ func report(args []string) error {
 	since := fs.String("since", "", "only since this long ago (24h, 7d) or this time")
 	limit := fs.Int("limit", 50, "max rows")
 	var run func(st *store.Store, since time.Time) error
+	// Filled in by the grouped reports, since these flags are only theirs.
+	var grouped func() (store.GroupQuery, error)
 
 	switch args[0] {
 	case "hits":
-		top := fs.String("top", "", "group by this column instead of listing hits")
+		ranks := rankFlags(fs, "group by these columns instead of listing hits")
 		site := fs.String("site", "", "only this site")
 		ip := fs.String("ip", "", "only this client IP")
+		grouped = ranks
 		run = func(st *store.Store, since time.Time) error {
-			if *top != "" {
-				kvs, err := st.TopHits(*top, *site, since, *limit)
+			q, err := ranks()
+			if err != nil {
+				return err
+			}
+			if q.By != "" {
+				q.Site, q.IP, q.Since, q.Limit = *site, *ip, since, *limit
+				kvs, err := st.TopHits(q)
 				if err != nil {
 					return err
 				}
-				return printKVs(*top, kvs)
+				if err := printKVs(q.By, kvs); err != nil {
+					return err
+				}
+				return printTripCount(st, *ip)
 			}
 			hits, err := st.Hits(store.HitFilter{Site: *site, IP: *ip, Since: since, Limit: *limit})
 			if err != nil {
@@ -64,8 +76,19 @@ func report(args []string) error {
 	case "dns":
 		domain := fs.String("domain", "", "which clients looked up this domain (and its subdomains)")
 		client := fs.String("client", "", "which domains this client looked up")
-		top := fs.String("top", "", "domain|client: busiest domains or clients")
+		ranks := rankFlags(fs, "domain, client or both")
+		grouped = ranks
 		run = func(st *store.Store, since time.Time) error {
+			q, err := ranks()
+			if err != nil {
+				return err
+			}
+			if *domain != "" && *client != "" {
+				return fmt.Errorf("use only one of -domain and -client")
+			}
+			if q.By != "" && (*domain != "" || *client != "") {
+				return fmt.Errorf("-domain and -client already list one thing's lookups; they can't be combined with -top, -bottom or -new")
+			}
 			switch {
 			case *domain != "":
 				rows, err := st.DNSByDomain(*domain, since)
@@ -104,14 +127,15 @@ func report(args []string) error {
 					return err
 				}
 				return printTripCount(st, *client)
-			case *top != "":
-				kvs, err := st.DNSTop(*top, since, *limit)
+			case q.By != "":
+				q.Since, q.Limit = since, *limit
+				kvs, err := st.DNSTop(q)
 				if err != nil {
 					return err
 				}
-				return printKVs(*top, kvs)
+				return printKVs(q.By, kvs)
 			}
-			return fmt.Errorf("report dns needs -domain, -client or -top")
+			return fmt.Errorf("report dns needs -domain, -client, -top, -bottom or -new")
 		}
 	case "trips":
 		ip := fs.String("ip", "", "only trips by this key/IP")
@@ -168,6 +192,19 @@ func report(args []string) error {
 		os.Exit(2)
 	}
 	fs.Parse(args[1:])
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected %q: options start with a dash, like -top %s", fs.Arg(0), fs.Arg(0))
+	}
+	if grouped != nil {
+		q, err := grouped()
+		if err != nil {
+			return err
+		}
+		// "New" needs a window to mean anything.
+		if q.Rank == store.RankNew && *since == "" {
+			*since = "24h"
+		}
+	}
 	st, err := store.Open(*db)
 	if err != nil {
 		return err
@@ -180,13 +217,48 @@ func report(args []string) error {
 	return run(st, s)
 }
 
+// rankFlags adds -top, -bottom and -new. The returned func reports which one was
+// used; By is empty when none was.
+func rankFlags(fs *flag.FlagSet, what string) func() (store.GroupQuery, error) {
+	top := fs.String("top", "", what+": most common first")
+	bottom := fs.String("bottom", "", what+": rarest first")
+	fresh := fs.String("new", "", what+": first seen inside -since (default 24h), newest first")
+	return func() (store.GroupQuery, error) {
+		var q store.GroupQuery
+		for _, f := range []struct {
+			by   string
+			rank store.Rank
+		}{{*top, store.RankTop}, {*bottom, store.RankBottom}, {*fresh, store.RankNew}} {
+			if f.by == "" {
+				continue
+			}
+			if q.By != "" {
+				return q, fmt.Errorf("use only one of -top, -bottom and -new")
+			}
+			q.By, q.Rank = f.by, f.rank
+		}
+		return q, nil
+	}
+}
+
 func table() *tabwriter.Writer { return tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0) }
 
+// printKVs prints values in full: terminals can scroll, and the long ones (user
+// agents, odd paths) are often the interesting ones.
 func printKVs(by string, kvs []store.KV) error {
 	w := table()
-	fmt.Fprintf(w, "%s\tCOUNT\n", by)
+	withFirst := len(kvs) > 0 && !kvs[0].First.IsZero()
+	head := strings.ReplaceAll(by, ",", "\t") + "\tCOUNT"
+	if withFirst {
+		head += "\tFIRST SEEN"
+	}
+	fmt.Fprintln(w, head)
 	for _, kv := range kvs {
-		fmt.Fprintf(w, "%s\t%d\n", trunc(kv.Key, 100), kv.Count)
+		fmt.Fprintf(w, "%s\t%d", kv.Key, kv.Count)
+		if withFirst {
+			fmt.Fprintf(w, "\t%s", localTime(kv.First))
+		}
+		fmt.Fprintln(w)
 	}
 	return w.Flush()
 }

@@ -19,8 +19,15 @@ Conventions
           Omitted = all time.
   limit   max rows. Omitted or 0 = 100 (25 for the /top endpoints).
   times   JSON times are UTC, RFC 3339 with nanoseconds.
+  order   for the /top endpoints. top = most common first (the default),
+          bottom = rarest first, new = first seen inside since= (which then
+          defaults to 24h), newest first, with counts from all time and a
+          "first" time on each row.
+  by      for the /top endpoints. One field, or several separated by commas to
+          group by the combination, as in by=ua,method,path,ip. Each row then
+          also has "keys", with one value per field in the same order.
   errors  plain text body. 400 = bad parameter, 404 = no such thing,
-          500 = server error (including an unknown by= value).
+          500 = server error.
 
 
 PUBLIC
@@ -93,7 +100,7 @@ ADMIN (all GET, all JSON)
     caddy       read from a Caddy JSON access log
     access-log  read from an nginx/apache access log
 
-/api/top?by=ip|path|ua|site|host|status|method|referer[&site=][&since=][&limit=25]
+/api/top?by=ip|path|ua|site|host|status|method|referer[&order=][&site=][&ip=][&since=][&limit=25]
   Hit counts grouped by one field, biggest first. by defaults to ip.
   [{"key": "203.0.113.9", "count": 42}]
 
@@ -110,7 +117,7 @@ ADMIN (all GET, all JSON)
    "connections": [ same as above ]}
   400 if neither domain= nor client= is given.
 
-/api/dns/top?by=domain|client[&since=][&limit=25]
+/api/dns/top?by=domain|client[&order=][&since=][&limit=25]
   Lookup counts grouped by domain or by client.
   [{"key": "example.com", "count": 7}]
 
@@ -140,6 +147,8 @@ ADMIN (all GET, all JSON)
 Same data from the command line
 -------------------------------
   dnscount report hits -top ip -since 24h
+  dnscount report hits -bottom path -ip 203.0.113.9
+  dnscount report dns -new domain
   dnscount report dns -domain example.com
   dnscount report trips
   dnscount report trip <id>

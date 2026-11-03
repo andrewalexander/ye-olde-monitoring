@@ -33,11 +33,39 @@ func ParseSince(s string, now time.Time) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("since: %q is not a duration (24h, 7d), RFC 3339 time or date", s)
 }
 
-// KV is one row of a "top N" report.
+// KV is one row of a grouped report. Keys holds each column's value when
+// grouping by several, with Key tab-joining them. First is only set for RankNew.
 type KV struct {
-	Key   string `json:"key"`
-	Count int64  `json:"count"`
+	Key   string    `json:"key"`
+	Keys  []string  `json:"keys,omitempty"`
+	Count int64     `json:"count"`
+	First time.Time `json:"first,omitzero"`
 }
+
+// Rank picks which rows of a grouped report come back.
+type Rank string
+
+const (
+	RankTop    Rank = "top"    // most common first
+	RankBottom Rank = "bottom" // rarest first
+	RankNew    Rank = "new"    // first seen inside the window, newest first
+)
+
+// GroupQuery asks for a grouped report. Since is the window for every rank, but
+// RankNew counts each row's whole history, so "new" means never seen before Since.
+type GroupQuery struct {
+	By       string // one column, or several separated by commas
+	Site, IP string // hits only; empty matches everything
+	Since    time.Time
+	Limit    int
+	Rank     Rank
+}
+
+// BadQueryError is a request for a report that doesn't exist, as opposed to a
+// failure running it.
+type BadQueryError string
+
+func (e BadQueryError) Error() string { return string(e) }
 
 // Seen is a count with first/last timestamps.
 type Seen struct {
@@ -51,16 +79,76 @@ var hitColumns = map[string]string{
 	"host": "host", "status": "status", "method": "method", "referer": "referer",
 }
 
-// TopHits groups hits by one column (ip|path|ua|site|host|status|method|referer).
-func (s *Store) TopHits(by, site string, since time.Time, limit int) ([]KV, error) {
-	col, ok := hitColumns[by]
-	if !ok {
-		return nil, fmt.Errorf("can't group hits by %q", by)
+// TopHits groups hits by one or more of ip|path|ua|site|host|status|method|referer.
+func (s *Store) TopHits(q GroupQuery) ([]KV, error) {
+	var cols []string
+	for _, by := range strings.Split(q.By, ",") {
+		col, ok := hitColumns[by]
+		if !ok {
+			return nil, BadQueryError(fmt.Sprintf("can't group hits by %q", by))
+		}
+		cols = append(cols, `CAST(`+col+` AS TEXT)`)
 	}
-	q := `SELECT CAST(` + col + ` AS TEXT), count(*) FROM hits
-		WHERE ts >= ? AND (? = '' OR site = ?)
-		GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT ?`
-	return s.kvs(q, fmtTime(since), site, site, limit)
+	return s.group(q, `hits`, cols, `(? = '' OR site = ?) AND (? = '' OR client_ip = ?)`,
+		q.Site, q.Site, q.IP, q.IP)
+}
+
+// group runs a grouped report, keeping each row's filter in filter/args.
+func (s *Store) group(q GroupQuery, table string, cols []string, filter string, args ...any) ([]KV, error) {
+	if q.Limit <= 0 {
+		q.Limit = 25
+	}
+	// Columns are referred to by position: the keys, then the count, then the time.
+	n := len(cols)
+	keys := make([]string, n)
+	for i := range keys {
+		keys[i] = strconv.Itoa(i + 1)
+	}
+	byKeys := strings.Join(keys, ", ")
+	count, first := strconv.Itoa(n+1), strconv.Itoa(n+2)
+	stmt := `SELECT ` + strings.Join(cols, ", ") + `, count(*), min(ts) FROM ` + table + ` WHERE ` + filter
+	switch q.Rank {
+	case RankTop, "":
+		stmt += ` AND ts >= ? GROUP BY ` + byKeys + ` ORDER BY ` + count + ` DESC, ` + byKeys + ` LIMIT ?`
+	case RankBottom:
+		stmt += ` AND ts >= ? GROUP BY ` + byKeys + ` ORDER BY ` + count + `, ` + byKeys + ` LIMIT ?`
+	case RankNew:
+		stmt += ` GROUP BY ` + byKeys + ` HAVING min(ts) >= ? ORDER BY ` + first + ` DESC, ` + byKeys + ` LIMIT ?`
+	default:
+		return nil, BadQueryError(fmt.Sprintf("unknown order %q (top|bottom|new)", q.Rank))
+	}
+	rows, err := s.db.Query(stmt, append(args, fmtTime(q.Since), q.Limit)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []KV
+	for rows.Next() {
+		var kv KV
+		var firstTS string
+		vals := make([]sql.NullString, n)
+		dest := make([]any, 0, n+2)
+		for i := range vals {
+			dest = append(dest, &vals[i])
+		}
+		dest = append(dest, &kv.Count, &firstTS)
+		if err := rows.Scan(dest...); err != nil {
+			return nil, err
+		}
+		parts := make([]string, n)
+		for i, v := range vals {
+			parts[i] = v.String
+		}
+		kv.Key = strings.Join(parts, "\t")
+		if n > 1 {
+			kv.Keys = parts
+		}
+		if q.Rank == RankNew {
+			kv.First = parseTime(firstTS)
+		}
+		out = append(out, kv)
+	}
+	return out, rows.Err()
 }
 
 // HitFilter selects hits; empty fields match everything.
@@ -160,14 +248,17 @@ func (s *Store) DNSByClient(ip string, since time.Time, limit int) ([]DomainLook
 	return out, rows.Err()
 }
 
-// DNSTop groups lookups by domain or client.
-func (s *Store) DNSTop(by string, since time.Time, limit int) ([]KV, error) {
-	col := map[string]string{"domain": "domain", "client": "client_ip"}[by]
-	if col == "" {
-		return nil, fmt.Errorf("can't group dns by %q (domain|client)", by)
+// DNSTop groups lookups by domain, client or both.
+func (s *Store) DNSTop(q GroupQuery) ([]KV, error) {
+	var cols []string
+	for _, by := range strings.Split(q.By, ",") {
+		col := map[string]string{"domain": "domain", "client": "client_ip"}[by]
+		if col == "" {
+			return nil, BadQueryError(fmt.Sprintf("can't group dns by %q (domain|client)", by))
+		}
+		cols = append(cols, col)
 	}
-	return s.kvs(`SELECT `+col+`, count(*) FROM dns_queries WHERE ts >= ? GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT ?`,
-		fmtTime(since), limit)
+	return s.group(q, `dns_queries`, cols, `1`)
 }
 
 // ConnStat is a group of firewall-logged connections.
@@ -239,23 +330,4 @@ func (s *Store) IPHistory(ip string) (IPHistory, error) {
 	}
 	err := s.db.QueryRow(`SELECT count(*) FROM breaker_trips WHERE key = ?`, ip).Scan(&h.Trips)
 	return h, err
-}
-
-func (s *Store) kvs(q string, args ...any) ([]KV, error) {
-	rows, err := s.db.Query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []KV
-	for rows.Next() {
-		var kv KV
-		var k sql.NullString
-		if err := rows.Scan(&k, &kv.Count); err != nil {
-			return nil, err
-		}
-		kv.Key = k.String
-		out = append(out, kv)
-	}
-	return out, rows.Err()
 }

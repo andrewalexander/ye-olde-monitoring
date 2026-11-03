@@ -1,8 +1,10 @@
 package store_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -233,5 +235,100 @@ func TestBackup(t *testing.T) {
 	defer cp.Close()
 	if a, b := rowCounts(t, st), rowCounts(t, cp); a["dns_queries"] != b["dns_queries"] || b["dns_queries"] != 7 {
 		t.Errorf("backup has %v, original %v", b, a)
+	}
+}
+
+func TestGroupRanks(t *testing.T) {
+	st := open(t)
+	at := func(h int) time.Time { return time.Date(2026, 10, 27, h, 0, 0, 0, time.UTC) }
+	line := func(h int, client, domain string) ingest.Record {
+		return ingest.Record{Query: &ingest.DNSQuery{Hash: domain + client + at(h).String(), TS: at(h), ClientIP: client, Domain: domain, QType: "A", Source: "test"}}
+	}
+	web := func(id string, h int, ip, path string) ingest.Record {
+		return ingest.Record{Hit: &hit.Hit{Hash: id, TS: at(h), Site: "s", Source: "test", ClientIP: ip, Method: "GET", Path: path, Status: 200}}
+	}
+	if _, err := st.InsertRecords([]ingest.Record{
+		line(1, "10.0.0.1", "common.test"), line(2, "10.0.0.1", "common.test"), line(9, "10.0.0.2", "common.test"),
+		line(3, "10.0.0.1", "rare.test"),
+		line(8, "10.0.0.2", "fresh.test"), line(9, "10.0.0.3", "fresh.test"),
+		web("a", 1, "10.0.0.1", "/mine"), web("b", 2, "10.0.0.1", "/mine"), web("c", 3, "10.0.0.2", "/theirs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	keys := func(kvs []store.KV) string {
+		var out []string
+		for _, kv := range kvs {
+			out = append(out, kv.Key)
+		}
+		return strings.Join(out, ",")
+	}
+	dnsCase := func(name, want string, q store.GroupQuery) {
+		t.Helper()
+		q.By = "domain"
+		got, err := st.DNSTop(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if keys(got) != want {
+			t.Errorf("%s = %q, want %q", name, keys(got), want)
+		}
+	}
+	dnsCase("top", "common.test,fresh.test,rare.test", store.GroupQuery{Rank: store.RankTop})
+	dnsCase("default is top", "common.test,fresh.test,rare.test", store.GroupQuery{})
+	dnsCase("bottom", "rare.test,fresh.test,common.test", store.GroupQuery{Rank: store.RankBottom})
+	dnsCase("limit", "rare.test", store.GroupQuery{Rank: store.RankBottom, Limit: 1})
+	// common.test was looked up inside the window too, but it isn't new.
+	dnsCase("new", "fresh.test", store.GroupQuery{Rank: store.RankNew, Since: at(5)})
+	dnsCase("new, newest first", "fresh.test,rare.test", store.GroupQuery{Rank: store.RankNew, Since: at(3)})
+
+	got, err := st.DNSTop(store.GroupQuery{By: "domain", Rank: store.RankNew, Since: at(5)})
+	if err != nil || len(got) != 1 {
+		t.Fatalf("%v %v", got, err)
+	}
+	// All of its lookups count, and First says when it appeared.
+	if got[0].Count != 2 || !got[0].First.Equal(at(8)) {
+		t.Errorf("new row = %+v", got[0])
+	}
+	top, _ := st.DNSTop(store.GroupQuery{By: "domain"})
+	if !top[0].First.IsZero() {
+		t.Errorf("top row has a first time: %+v", top[0])
+	}
+
+	byIP, err := st.TopHits(store.GroupQuery{By: "path", IP: "10.0.0.1"})
+	if err != nil || keys(byIP) != "/mine" {
+		t.Errorf("-top path -ip = %v %v", byIP, err)
+	}
+
+	multi, err := st.TopHits(store.GroupQuery{By: "ip,path", Rank: store.RankBottom})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(multi) != 2 || multi[0].Count != 1 || multi[0].Key != "10.0.0.2\t/theirs" ||
+		multi[0].Keys[0] != "10.0.0.2" || multi[0].Keys[1] != "/theirs" || multi[1].Count != 2 {
+		t.Errorf("-bottom ip,path = %+v", multi)
+	}
+	// status is an integer column, so it has to come back as text too.
+	mixed, err := st.TopHits(store.GroupQuery{By: "status,method", IP: "10.0.0.2"})
+	if err != nil || len(mixed) != 1 || mixed[0].Key != "200\tGET" {
+		t.Errorf("-top status,method = %+v %v", mixed, err)
+	}
+	newMulti, err := st.DNSTop(store.GroupQuery{By: "domain,client", Rank: store.RankNew, Since: at(9)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// fresh.test is old by itself, but this client asking for it is new.
+	if keys(newMulti) != "common.test\t10.0.0.2,fresh.test\t10.0.0.3" {
+		t.Errorf("-new domain,client = %q", keys(newMulti))
+	}
+
+	var bad store.BadQueryError
+	if _, err := st.TopHits(store.GroupQuery{By: "password"}); !errors.As(err, &bad) {
+		t.Errorf("bad by = %v", err)
+	}
+	if _, err := st.TopHits(store.GroupQuery{By: "ip,password"}); !errors.As(err, &bad) {
+		t.Errorf("bad by in a list = %v", err)
+	}
+	if _, err := st.DNSTop(store.GroupQuery{By: "domain", Rank: "sideways"}); !errors.As(err, &bad) {
+		t.Errorf("bad rank = %v", err)
 	}
 }

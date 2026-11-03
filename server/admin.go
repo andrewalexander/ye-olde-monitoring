@@ -23,7 +23,9 @@ func (s *Server) Admin(extraHealth func() map[string]any) http.Handler {
 		return st.Hits(store.HitFilter{Site: p.str("site"), IP: p.str("ip"), Since: p.since(), Limit: p.int("limit")})
 	}))
 	mux.HandleFunc("GET /api/top", s.api(func(r *http.Request, p *params) (any, error) {
-		return st.TopHits(p.strOr("by", "ip"), p.str("site"), p.since(), p.intOr("limit", 25))
+		q := p.group("ip")
+		q.Site, q.IP = p.str("site"), p.str("ip")
+		return st.TopHits(q)
 	}))
 	mux.HandleFunc("GET /api/dns", s.api(func(r *http.Request, p *params) (any, error) {
 		if d := p.str("domain"); d != "" {
@@ -45,7 +47,7 @@ func (s *Server) Admin(extraHealth func() map[string]any) http.Handler {
 		return nil, errBadParam("need domain= or client=")
 	}))
 	mux.HandleFunc("GET /api/dns/top", s.api(func(r *http.Request, p *params) (any, error) {
-		return st.DNSTop(p.strOr("by", "domain"), p.since(), p.intOr("limit", 25))
+		return st.DNSTop(p.group("domain"))
 	}))
 	mux.HandleFunc("GET /api/trips", s.api(func(r *http.Request, p *params) (any, error) {
 		return st.Trips(store.TripFilter{Since: p.since(), Key: p.str("ip"), Breaker: p.str("breaker"), Limit: p.int("limit")})
@@ -128,6 +130,19 @@ func (p *params) since() time.Time {
 	return t
 }
 
+// group reads the parameters shared by the grouped reports. order=new needs a
+// window to mean anything, so it defaults to the last 24 hours.
+func (p *params) group(by string) store.GroupQuery {
+	rank := store.Rank(p.strOr("order", string(store.RankTop)))
+	q := store.GroupQuery{By: p.strOr("by", by), Limit: p.intOr("limit", 25), Rank: rank}
+	if rank == store.RankNew && p.str("since") == "" {
+		q.Since = p.s.cfg.Now().Add(-24 * time.Hour)
+	} else {
+		q.Since = p.since()
+	}
+	return q
+}
+
 func (s *Server) api(f func(*http.Request, *params) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := &params{r: r, s: s}
@@ -136,8 +151,9 @@ func (s *Server) api(f func(*http.Request, *params) (any, error)) http.HandlerFu
 			err = p.err
 		}
 		var bp errBadParam
+		var bq store.BadQueryError
 		switch {
-		case errors.As(err, &bp):
+		case errors.As(err, &bp), errors.As(err, &bq):
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		case errors.Is(err, errNotFound):
 			http.Error(w, "not found", http.StatusNotFound)
