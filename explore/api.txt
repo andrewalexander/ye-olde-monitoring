@@ -52,8 +52,10 @@ Shared with the admin API (alerts and bans gain the fields above):
   LAN devices: lookups, distinct domains, new domains, flagged domains
   (directly or through what they resolved to) with up to 5 examples.
 
-/api/flagged?[since=30d][&verdict=malicious,suspicious|all][&limit=100]
+/api/flagged?[since=30d][&verdict=malicious,suspicious|all|reserved][&limit=100]
   Every listed indicator seen in the window, worst and newest first.
+  verdict=reserved (alone or with others) adds special-purpose addresses
+  and names, which are never flagged otherwise; they sort last.
   [{"indicator","kind","direction": in|out|both,"first_seen","last_seen",
     "hits","sites","bans","alerts","clients":[{"ip","count"}],
     "via_domains", ...intel}]

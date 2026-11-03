@@ -210,7 +210,7 @@ const LIST_VIEWS = {
   },
   flagged: {
     title: "Flagged",
-    lede: "Every listed indicator seen in the window: incoming (it reached us), outgoing (the LAN reached it) or both.",
+    lede: "Every listed indicator seen in the window: incoming (it reached us), outgoing (the LAN reached it) or both. Choose \"reserved\" to see special-purpose addresses and names instead, such as ipv4only.arpa (NAT64 discovery), which are never flagged.",
     url: "/api/flagged", options: ["verdict"],
     columns: () => [
       col("Verdict", "verdict", "verdict"),
@@ -302,7 +302,7 @@ function optionControls(view, def, q) {
       box.append(el("label", {}, "order ", s));
     } else if (o === "verdict") {
       const s = el("select", { onchange: (e) => set("verdict", e.target.value) },
-        [["", "malicious + suspicious"], ["malicious", "malicious"], ["all", "all, including info"]].map(([v, t]) => el("option", { value: v, text: t })));
+        [["", "malicious + suspicious"], ["malicious", "malicious"], ["all", "all, including info"], ["reserved", "reserved (special-purpose)"]].map(([v, t]) => el("option", { value: v, text: t })));
       s.value = q.get("verdict") || "";
       box.append(el("label", {}, "verdicts ", s));
     } else if (o === "action") {
@@ -662,7 +662,30 @@ async function route(opts) {
   }
 }
 
+// The find box: an IP goes to its page, anything else is taken as a domain.
+// A pasted URL counts as its host.
+function findTarget(raw) {
+  let s = String(raw || "").trim();
+  if (!s) return null;
+  if (s.includes("://")) { try { s = new URL(s).hostname; } catch { return null; } }
+  s = s.replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (/^[0-9.]+$/.test(s) || (s.includes(":") && /^[0-9a-f:.]+$/i.test(s))) return href("ip", s);
+  s = s.toLowerCase();
+  if (!/^[a-z0-9_.-]+$/.test(s) || !s.includes(".")) return null;
+  return href("domain", s);
+}
+
 function init() {
+  const find = document.getElementById("find");
+  const findQ = document.getElementById("find-q");
+  find.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const to = findTarget(findQ.value);
+    find.querySelector(".error")?.remove();
+    if (!to) { find.append(el("span", { class: "error", text: "not an IP or domain" })); return; }
+    findQ.value = "";
+    location.hash = to;
+  });
   const sel = document.getElementById("since");
   sel.value = state.since;
   sel.addEventListener("change", () => { state.since = sel.value; state.limits = {}; localStorageSet("since", sel.value); route(); });

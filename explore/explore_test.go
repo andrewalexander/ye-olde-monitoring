@@ -81,7 +81,7 @@ func TestExplorerEndToEnd(t *testing.T) {
 
 	for _, path := range []string{"/api/ips", "/api/domains", "/api/clients", "/api/flagged", "/api/feeds", "/api/overview",
 		"/api/health", "/api/health/series", "/api/ip/203.0.113.66", "/api/domain/evil.example.org", "/api/hits",
-		"/api/alerts", "/api/bans", "/api/trips", "/api"} {
+		"/api/alerts", "/api/bans", "/api/trips", "/api", "/api/flagged?verdict=reserved", "/api/flagged?verdict=malicious,reserved"} {
 		if resp, body := get(t, h, path); resp.StatusCode != 200 {
 			t.Errorf("%s = %d: %s", path, resp.StatusCode, body)
 		}

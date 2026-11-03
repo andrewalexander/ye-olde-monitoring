@@ -75,3 +75,9 @@ CREATE TABLE IF NOT EXISTS ip_asn_changes (
 	new_owner TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ip_asn_changes_ip ON ip_asn_changes(ip, ts);
+
+-- Bookkeeping: index_version (see store.indexVersion).
+CREATE TABLE IF NOT EXISTS meta (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);

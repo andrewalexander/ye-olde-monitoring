@@ -6,6 +6,7 @@ import (
 	"context"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -328,6 +329,35 @@ func TestReservedAddressesAreContextNotFindings(t *testing.T) {
 	if len(fl) != 0 {
 		t.Errorf("reserved addresses flagged: %+v", fl)
 	}
+	// Asked for, they come back with who looked them up.
+	fl, err = x.ro.Flagged(store.FlaggedQuery{Since: since, Verdicts: []string{enrich.VerdictReserved}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]store.FlaggedRow{}
+	for _, r := range fl {
+		got[r.Indicator] = r
+	}
+	if len(fl) != 3 {
+		t.Errorf("reserved: %d rows, want .170, .171 and ipv4only.arpa: %+v", len(fl), fl)
+	}
+	for _, ind := range []string{"192.0.0.170", "192.0.0.171", "ipv4only.arpa"} {
+		r := got[ind]
+		if r.Intel == nil || r.Verdict != enrich.VerdictReserved || r.Special == nil || r.Direction != "out" ||
+			len(r.Clients) != 1 || r.Clients[0].IP != "192.168.1.20" {
+			t.Errorf("reserved %s: %+v intel %+v", ind, r, r.Intel)
+		}
+	}
+	if r := got["192.0.0.170"]; !slices.Contains(r.Via, "ipv4only.arpa") {
+		t.Errorf(".170 via = %v", r.Via)
+	}
+	// Mixed with real verdicts, reserved ones sort last.
+	if _, err := x.ro.Flagged(store.FlaggedQuery{Since: since, Verdicts: []string{"malicious", "reserved"}}); err != nil {
+		t.Error(err)
+	}
+	if _, err := x.ro.Flagged(store.FlaggedQuery{Since: since, Verdicts: []string{"bogus"}}); err == nil {
+		t.Error("bad verdict accepted")
+	}
 	in, err := x.ro.Intel([]string{"192.0.0.170", "ipv4only.arpa"}, true)
 	if err != nil {
 		t.Fatal(err)
@@ -346,7 +376,7 @@ func TestReservedAddressesAreContextNotFindings(t *testing.T) {
 		t.Errorf("flagged domains: %+v %v", doms, err)
 	}
 	doms, _ = x.ro.Domains(store.ListQuery{Since: since})
-	if len(doms) != 1 || doms[0].Domain != "ipv4only.arpa" || doms[0].Verdict != enrich.VerdictReserved || doms[0].Answers != nil {
+	if len(doms) != 1 || doms[0].Domain != "ipv4only.arpa" || doms[0].Verdict != enrich.VerdictReserved || doms[0].Answers != nil || !doms[0].New {
 		t.Errorf("domains: %+v", doms)
 	}
 	cl, _ := x.ro.Clients(since)
@@ -358,5 +388,36 @@ func TestReservedAddressesAreContextNotFindings(t *testing.T) {
 	if err != nil || len(p.ResolvedBy) != 1 || p.ResolvedBy[0].Domain != "ipv4only.arpa" ||
 		len(p.ResolvedBy[0].Clients) != 1 || p.ResolvedBy[0].Clients[0].IP != "192.168.1.20" {
 		t.Errorf("profile: %+v %v", p.ResolvedBy, err)
+	}
+}
+
+// Bumping the index version re-reads everything, without changing what was
+// already indexed.
+func TestIndexVersionRereads(t *testing.T) {
+	x := openExplorer(t)
+	importFile(t, x.primary, "unifi-syslog.log", ingest.Multi{dns.Dnsmasq{}, fw.IPTables{}})
+	x.index(t)
+	snapshot := func() string {
+		rows, _ := x.enr.DB().Query(`SELECT indicator, kind, first_seen, last_seen, roles FROM indicators ORDER BY indicator`)
+		defer rows.Close()
+		var b strings.Builder
+		for rows.Next() {
+			var a, k, f, l string
+			var r int
+			rows.Scan(&a, &k, &f, &l, &r)
+			b.WriteString(a + k + f + l + strconv.Itoa(r) + "\n")
+		}
+		return b.String()
+	}
+	before := snapshot()
+	if n, _ := store.IndexNew(x.ro, x.enr, 100); n != 0 {
+		t.Fatalf("re-read %d rows without a version change", n)
+	}
+	x.enr.DB().Exec(`UPDATE meta SET value = '1' WHERE key = 'index_version'`)
+	if n, err := store.IndexNew(x.ro, x.enr, 100); err != nil || n == 0 {
+		t.Fatalf("old version: re-read %d rows, %v", n, err)
+	}
+	if after := snapshot(); after != before {
+		t.Errorf("re-reading changed the index:\n%s\nvs\n%s", before, after)
 	}
 }

@@ -55,6 +55,9 @@ func IndexNew(src, dst *Store, batch int) (int, error) {
 	if batch <= 0 {
 		batch = 20000
 	}
+	if err := dst.resetIndexIfOld(); err != nil {
+		return 0, err
+	}
 	total := 0
 	for _, is := range indexSources {
 		for {
@@ -164,8 +167,9 @@ func classify(v string, role int) (ind, kind string) {
 		return "", "" // a private address
 	}
 	if role == RoleLookup {
-		if d, ok := enrich.PublicDomain(v); ok {
-			return d, "domain"
+		d, ok := enrich.PublicDomain(v)
+		if _, special := enrich.SpecialDomain(d); ok || special {
+			return d, "domain" // special-use names like ipv4only.arpa are kept for context
 		}
 	}
 	return "", ""
@@ -556,4 +560,36 @@ func (s *Store) Intel(inds []string, history bool) (map[string]*Intel, error) {
 		}
 	}
 	return out, nil
+}
+
+// indexVersion goes up whenever what gets indexed changes, so the next run
+// re-reads every table from the start. Re-reading is safe: indicators only
+// widen their first/last seen and gain roles.
+//
+//	1: first version
+//	2: special-use names (ipv4only.arpa) are indexed too
+const indexVersion = 2
+
+func (s *Store) resetIndexIfOld() error {
+	var v int
+	err := s.queryRow(`SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'index_version'`).Scan(&v)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if v >= indexVersion {
+		return nil
+	}
+	tx, err := s.db.BeginTx(s.c(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM cursors`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO meta (key, value) VALUES ('index_version', ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, indexVersion); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

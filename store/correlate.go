@@ -554,7 +554,9 @@ type FlaggedRow struct {
 // FlaggedQuery selects flagged indicators.
 type FlaggedQuery struct {
 	Since time.Time
-	// Verdicts to include; empty means malicious and suspicious.
+	// Verdicts to include; empty means malicious and suspicious. "reserved"
+	// adds special-purpose addresses and names (RFC 6890, ipv4only.arpa),
+	// which are never flagged otherwise.
 	Verdicts []string
 	Limit    int
 }
@@ -568,56 +570,84 @@ func (s *Store) Flagged(q FlaggedQuery) ([]FlaggedRow, error) {
 	if len(q.Verdicts) == 0 {
 		q.Verdicts = []string{enrich.Malicious, enrich.Suspicious}
 	}
-	args := []any{fmtTime(q.Since)}
+	type candidate struct {
+		ind, kind, first, last string
+		role, rank             int
+	}
+	var cands []candidate
+	var listedArgs []any
+	wantReserved := false
 	for _, v := range q.Verdicts {
-		if enrich.VerdictRank(v) == 0 {
-			return nil, BadQueryError("verdict must be malicious, suspicious or info")
+		switch {
+		case v == enrich.VerdictReserved:
+			wantReserved = true
+		case enrich.VerdictRank(v) > 0:
+			listedArgs = append(listedArgs, v)
+		default:
+			return nil, BadQueryError("verdict must be malicious, suspicious, info or reserved")
 		}
-		args = append(args, v)
 	}
-	in := strings.TrimSuffix(strings.Repeat("?,", len(q.Verdicts)), ",")
-	rows, err := s.query(`SELECT i.indicator, i.kind, i.roles, i.first_seen, i.last_seen,
-			max(CASE e.verdict WHEN 'malicious' THEN 3 WHEN 'suspicious' THEN 2 ELSE 1 END) AS rank
-		FROM enrich.enrichment e JOIN enrich.indicators i ON i.indicator = e.indicator
-		WHERE e.listed = 1 AND i.last_seen >= ? AND e.verdict IN (`+in+`)
-		  AND i.indicator NOT IN (SELECT ip FROM enrich.lan_clients)
-		GROUP BY i.indicator ORDER BY rank DESC, i.last_seen DESC`, args...)
-	if err != nil {
-		return nil, err
+	since := fmtTime(q.Since)
+	scan := func(rows *sql.Rows, keep func(*candidate) bool) error {
+		defer rows.Close()
+		for rows.Next() {
+			var c candidate
+			if err := rows.Scan(&c.ind, &c.kind, &c.role, &c.first, &c.last, &c.rank); err != nil {
+				return err
+			}
+			if keep(&c) {
+				cands = append(cands, c)
+			}
+		}
+		return rows.Err()
 	}
-	var out []FlaggedRow
-	var roles []int
-	for rows.Next() {
-		var r FlaggedRow
-		var role, rank int
-		var first, last string
-		if err := rows.Scan(&r.Indicator, &r.Kind, &role, &first, &last, &rank); err != nil {
-			rows.Close()
+	if len(listedArgs) > 0 {
+		in := strings.TrimSuffix(strings.Repeat("?,", len(listedArgs)), ",")
+		rows, err := s.query(`SELECT i.indicator, i.kind, i.roles, i.first_seen, i.last_seen,
+				max(CASE e.verdict WHEN 'malicious' THEN 3 WHEN 'suspicious' THEN 2 ELSE 1 END) AS rank
+			FROM enrich.enrichment e JOIN enrich.indicators i ON i.indicator = e.indicator
+			WHERE e.listed = 1 AND i.last_seen >= ? AND e.verdict IN (`+in+`)
+			  AND i.indicator NOT IN (SELECT ip FROM enrich.lan_clients)
+			GROUP BY i.indicator`, append([]any{since}, listedArgs...)...)
+		if err != nil {
 			return nil, err
 		}
 		// Reserved addresses (and names) aren't hosts: a list matching them
-		// says nothing, so they're never flagged. The limit applies after.
-		if enrich.Reserved(r.Indicator) {
-			continue
+		// says nothing, so they only come back when asked for as "reserved".
+		if err := scan(rows, func(c *candidate) bool { return !enrich.Reserved(c.ind) }); err != nil {
+			return nil, err
 		}
-		if len(out) == q.Limit {
-			break
+	}
+	if wantReserved {
+		// Few indicators are special-purpose, and which are is decided in Go,
+		// so scan the window's indicators for them.
+		rows, err := s.query(`SELECT indicator, kind, roles, first_seen, last_seen, 0 FROM enrich.indicators
+			WHERE last_seen >= ? AND indicator NOT IN (SELECT ip FROM enrich.lan_clients)`, since)
+		if err != nil {
+			return nil, err
 		}
-		r.First, r.Last = parseTime(first), parseTime(last)
+		if err := scan(rows, func(c *candidate) bool { return enrich.Reserved(c.ind) }); err != nil {
+			return nil, err
+		}
+	}
+	slices.SortFunc(cands, func(a, b candidate) int {
+		return cmp.Or(cmp.Compare(b.rank, a.rank), strings.Compare(b.last, a.last), strings.Compare(a.ind, b.ind))
+	})
+	cands = cands[:min(len(cands), q.Limit)]
+	out := make([]FlaggedRow, 0, len(cands))
+	roles := make([]int, 0, len(cands))
+	for _, c := range cands {
+		r := FlaggedRow{Indicator: c.ind, Kind: c.kind, First: parseTime(c.first), Last: parseTime(c.last)}
 		switch {
-		case role&RolesIn != 0 && role&RolesOut != 0:
+		case c.role&RolesIn != 0 && c.role&RolesOut != 0:
 			r.Direction = "both"
-		case role&RolesIn != 0:
+		case c.role&RolesIn != 0:
 			r.Direction = "in"
 		default:
 			r.Direction = "out"
 		}
 		out = append(out, r)
-		roles = append(roles, role)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
+		roles = append(roles, c.role)
 	}
 	inds := make([]string, len(out))
 	for i, r := range out {
@@ -627,7 +657,6 @@ func (s *Store) Flagged(q FlaggedQuery) ([]FlaggedRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	since := fmtTime(q.Since)
 	for i := range out {
 		r := &out[i]
 		r.Intel = intel[r.Indicator]
