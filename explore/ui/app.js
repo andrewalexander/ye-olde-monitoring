@@ -166,7 +166,7 @@ function table(container, rows, columns, opts) {
     holder.append(el("p", { class: "muted", style: "padding:8px 12px;margin:0", text: "Nothing here for this window." }));
     return null;
   }
-  return new Tabulator(holder, {
+  const t = new Tabulator(holder, {
     data: rows,
     columns,
     layout: "fitDataStretch",
@@ -177,7 +177,13 @@ function table(container, rows, columns, opts) {
     movableColumns: true,
     ...opts,
   });
+  tablesBuilding.push(new Promise((done) => t.on("tableBuilt", done)));
+  return t;
 }
+
+// Tables lay themselves out a moment after they're created; a quiet refresh
+// waits for them before putting the scroll position back.
+let tablesBuilding = [];
 
 // ---------- views ----------
 const LIST_VIEWS = {
@@ -697,6 +703,13 @@ async function route(opts) {
   renderNav(view);
   document.title = `dnscount · ${arg || (LIST_VIEWS[view]?.title) || view}`;
   const y = window.scrollY;
+  const main = $main();
+  if (opts?.quiet) {
+    // Hold the page at its height while it's rebuilt, so the browser doesn't
+    // clamp the scroll position to a briefly shorter page.
+    main.style.minHeight = `${main.offsetHeight}px`;
+  }
+  tablesBuilding = [];
   try {
     if (LIST_VIEWS[view]) await renderList(view, q);
     else if (view === "ip" && arg) await renderIP(arg);
@@ -704,10 +717,16 @@ async function route(opts) {
     else if (view === "client" && arg) await renderClient(arg);
     else if (view === "health") await renderHealth();
     else await renderOverview();
-    if (opts?.quiet) window.scrollTo(0, y);
+    if (opts?.quiet) {
+      const settle = new Promise((done) => setTimeout(done, 2000)); // never wait forever
+      await Promise.race([Promise.all(tablesBuilding), settle]);
+      if (seq === routeSeq) window.scrollTo(0, y);
+    }
   } catch (e) {
     if (seq !== routeSeq) return;
     $main().replaceChildren(el("h1", { text: "Couldn't load this" }), el("p", { class: "error", text: e.message }));
+  } finally {
+    if (seq === routeSeq) main.style.minHeight = "";
   }
 }
 
