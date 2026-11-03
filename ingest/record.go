@@ -76,6 +76,22 @@ type IDSAlert struct {
 	Policy    string // the IPS policy that fired, e.g. "DShield Block List"
 }
 
+// Sighting is a LAN device seen at an address: from a DHCP lease, one of
+// UniFi's client events, or the router's neighbour table. Addresses get
+// reused, so a name applies from its sighting on, not forever.
+type Sighting struct {
+	Hash     string
+	TS       time.Time
+	IP       string
+	MAC      string // lower case
+	Hostname string // what the device calls itself
+	Alias    string // the name set in the UniFi Network app
+	Network  string // UniFi network name, when known
+	Iface    string // router interface (br0...), when known
+	Event    string // dhcpack | connected | disconnected | neighbour | ...
+	Source   string // dnsmasq-dhcp | unifi-cef | router-neigh
+}
+
 // Ban is fail2ban banning or unbanning an address.
 type Ban struct {
 	Hash     string
@@ -96,6 +112,7 @@ type Record struct {
 	Conn  *Conn
 	Alert *IDSAlert
 	Ban   *Ban
+	Seen  *Sighting
 }
 
 // ErrSkip means the line is fine but isn't something this parser records
@@ -213,6 +230,9 @@ func (r *Record) SetHash(h string) {
 	}
 	if r.Ban != nil {
 		r.Ban.Hash = h
+	}
+	if r.Seen != nil {
+		r.Seen.Hash = h
 	}
 }
 

@@ -5,6 +5,7 @@ package ids
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/netip"
 	"regexp"
 	"strconv"
@@ -101,7 +102,7 @@ func parseCEF(prefix, body string, now time.Time) (ingest.Record, error) {
 	}
 	name := head[5]
 	if kv["UNIFIipsSignature"] == "" && !strings.Contains(name, "Threat") && !strings.Contains(name, "Honeypot") {
-		return ingest.Record{}, ingest.ErrSkip
+		return cefSighting(name, prefix, kv, now)
 	}
 	a := &ingest.IDSAlert{
 		SrcIP: kv["src"], DstIP: kv["dst"], Proto: strings.ToLower(kv["proto"]),
@@ -210,4 +211,38 @@ func clientName(kv map[string]string, end string) string {
 		return n
 	}
 	return kv["UNIFI"+end+"ClientAlias"]
+}
+
+// cefSighting reads a client event (WiFi Client Connected, Wired Client
+// Connected, Network Accessed...) as a sighting of a LAN device. It needs a
+// MAC; the address is kept when the event has one. Other events are skipped.
+func cefSighting(name, prefix string, kv map[string]string, now time.Time) (ingest.Record, error) {
+	m, err := net.ParseMAC(kv["UNIFIclientMac"])
+	if err != nil || len(m) != 6 {
+		return ingest.Record{}, ingest.ErrSkip
+	}
+	s := &ingest.Sighting{MAC: m.String(), Hostname: kv["UNIFIclientHostname"], Alias: kv["UNIFIclientAlias"],
+		Network: kv["UNIFInetworkName"], Event: cefEvent(name), Source: "unifi-cef", TS: now}
+	if a, err := netip.ParseAddr(kv["UNIFIclientIp"]); err == nil {
+		s.IP = a.Unmap().String()
+	}
+	if h, err := ingest.ParseHeader(strings.TrimSpace(prefix)+" cef: -", now); err == nil && !h.TS.IsZero() {
+		s.TS = h.TS
+	}
+	if ts, ok := parseUTCTime(kv["UNIFIutcTime"]); ok {
+		s.TS = ts
+	}
+	return ingest.Record{Seen: s}, nil
+}
+
+// cefEvent shortens an event name: "WiFi Client Connected" -> "connected".
+func cefEvent(name string) string {
+	n := strings.ToLower(name)
+	switch {
+	case strings.HasSuffix(n, "disconnected"):
+		return "disconnected"
+	case strings.HasSuffix(n, "connected"):
+		return "connected"
+	}
+	return strings.ReplaceAll(n, " ", "-")
 }

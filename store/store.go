@@ -187,6 +187,13 @@ func (s *Store) InsertRecords(recs []ingest.Record) (int, error) {
 				return 0, err
 			}
 		}
+		if v := r.Seen; v != nil {
+			if err := exec(`INSERT OR IGNORE INTO lan_sightings (ts, ip, mac, hostname, alias, network, iface, event, source, line_hash)
+				VALUES (?,?,?,?,?,?,?,?,?,?)`, fmtTime(v.TS), v.IP, v.MAC, v.Hostname, v.Alias, v.Network, v.Iface,
+				v.Event, v.Source, v.Hash); err != nil {
+				return 0, err
+			}
+		}
 		if b := r.Ban; b != nil {
 			q, args := insertBan, banArgs(b)
 			if b.Event == "increase" {

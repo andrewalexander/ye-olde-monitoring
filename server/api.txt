@@ -109,7 +109,9 @@ ADMIN (all GET, all JSON)
 /api/dns?domain=NAME[&since=]
   Which clients looked up NAME (and its subdomains), plus firewall-logged
   connections to the addresses it resolved to.
-  {"lookups":     [{"client_ip","client_name","count","first","last"}],
+  client_name and mac: the LAN device at that address now, from DHCP,
+  UniFi client events and the router's neighbour table (lan_sightings).
+  {"lookups":     [{"client_ip","client_name","mac","count","first","last"}],
    "connections": [{"client_ip","dst_ip","dst_port","proto","action",
                     "count","first","last"}]}
 

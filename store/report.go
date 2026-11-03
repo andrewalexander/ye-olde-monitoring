@@ -233,6 +233,7 @@ const domainMatch = `(domain = ?1 OR (length(domain) > length(?1) AND substr(dom
 type ClientLookups struct {
 	ClientIP   string `json:"client_ip"`
 	ClientName string `json:"client_name,omitempty"`
+	MAC        string `json:"mac,omitempty"`
 	Seen
 }
 
@@ -255,7 +256,24 @@ func (s *Store) DNSByDomain(domain string, since time.Time) ([]ClientLookups, er
 		c.First, c.Last = parseTime(first), parseTime(last)
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	ips := make([]string, len(out))
+	for i, c := range out {
+		ips[i] = c.ClientIP
+	}
+	dev, err := s.Devices(ips, time.Time{})
+	for i := range out {
+		if d, ok := dev[out[i].ClientIP]; ok {
+			out[i].MAC = d.MAC
+			if out[i].ClientName == "" {
+				out[i].ClientName = d.Name
+			}
+		}
+	}
+	return out, err
 }
 
 // DomainLookups is one domain a client looked up.

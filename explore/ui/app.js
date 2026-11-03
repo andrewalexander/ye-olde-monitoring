@@ -90,6 +90,12 @@ function link(view, value, text) {
   return el("a", { href: href(view, value), text: text ?? value, title: value });
 }
 function ipLink(ip) { return link("ip", ip); }
+// A LAN client with its lookup count, named when we know the device.
+function clientLink(x) {
+  const a = link("client", x.ip, `${x.name || x.ip} (${x.count})`);
+  a.title = x.name ? `${x.name}: ${x.ip}` : x.ip;
+  return a;
+}
 function domainLink(d) { return link("domain", d); }
 function indicatorLink(ind, kind) { return kind === "domain" ? domainLink(ind) : ipLink(ind); }
 function badge(verdict) {
@@ -197,10 +203,11 @@ const LIST_VIEWS = {
   },
   clients: {
     title: "LAN clients",
-    lede: "Each device that used the router's DNS, and how many of the names it looked up are flagged.",
+    lede: "Each device that used the router's DNS, and how many of the names it looked up are flagged. Names come from DHCP, UniFi's client events and the router's neighbour table (which is how IPv6 addresses get one).",
     url: "/api/clients", options: [],
     columns: () => [
-      col("Client", "ip", "client"), col("Name", "name"), col("Flagged", "flagged_domains", "num"),
+      col("Client", "ip", "client"), col("Name", "name"), col("MAC", "mac"), col("Network", "network"),
+      col("Flagged", "flagged_domains", "num"),
       col("Flagged examples", "flagged_samples", "list", {
         formatter: (c) => el("span", { class: "tags" }, (c.getValue() || []).map((d) => domainLink(d))),
       }),
@@ -220,8 +227,8 @@ const LIST_VIEWS = {
       col("Owner", "as_owner"), col("CC", "country"),
       col("Hits", "hits", "num"), col("Alerts", "alerts", "num"), col("Bans", "bans", "num"),
       col("LAN clients", "clients", "list", {
-        formatter: (c) => el("span", { class: "tags" }, (c.getValue() || []).map((x) => link("client", x.ip, `${x.ip} (${x.count})`))),
-        headerFilterFunc: (t, v) => (v || []).some((x) => x.ip.includes(t)),
+        formatter: (c) => el("span", { class: "tags" }, (c.getValue() || []).map(clientLink)),
+        headerFilterFunc: (t, v) => (v || []).some((x) => x.ip.includes(t) || (x.name || "").toLowerCase().includes(String(t).toLowerCase())),
       }),
       col("Via", "via_domains", "list", {
         formatter: (c) => el("span", { class: "tags" }, (c.getValue() || []).map((d) => domainLink(d))),
@@ -375,10 +382,11 @@ async function renderIP(ip) {
   main.replaceChildren(el("h1", { text: ip }), el("p", { class: "muted", text: "Loading…" }));
   const p = await api(`/api/ip/${encodeURIComponent(ip)}`, { since: state.since });
   const h = p.history || {};
+  const devName = p.device && p.device.name;
   main.replaceChildren(
-    el("h1", { text: ip }),
-    el("p", { class: "lede" }, p.lan ? "A LAN address. " : "", "Counts below are all-time; the tables cover the selected window."),
-    el("div", { class: "grid" }, intelCard(p.intel), el("div", { class: "card" }, kv([
+    el("h1", { text: devName ? `${devName} (${ip})` : ip }),
+    el("p", { class: "lede" }, p.lan ? el("span", {}, "A LAN address. ", el("a", { href: href("client", ip), text: "What it looked up" }), ". ") : "", "Counts below are all-time; the tables cover the selected window."),
+    el("div", { class: "grid" }, p.lan ? deviceCard(p.device) : null, intelCard(p.intel), el("div", { class: "card" }, kv([
       ["Hits", h.hits?.count ? `${fmtNum(h.hits.count)} (${fmtTime(h.hits.first)} – ${fmtTime(h.hits.last)})` : "0"],
       ["DNS lookups", fmtNum(h.dns_queries?.count)],
       ["Connections", fmtNum(h.connections?.count)],
@@ -388,7 +396,7 @@ async function renderIP(ip) {
   if (p.intel && (p.intel.matches || []).length) { main.append(el("h2", { text: "Lists" })); matchesTable(main, p.intel.matches); }
   main.append(el("h2", { text: "Names that resolved to it (outgoing)" }));
   table(main, p.resolved_from, [col("Domain", "domain", "domain"), col("Answers", "count", "num"), col("Last", "last", "time"),
-    col("LAN clients", "clients", "list", { formatter: (c) => el("span", { class: "tags" }, (c.getValue() || []).map((x) => link("client", x.ip, `${x.ip} (${x.count})`))) })]);
+    col("LAN clients", "clients", "list", { formatter: (c) => el("span", { class: "tags" }, (c.getValue() || []).map(clientLink)) })]);
   main.append(el("h2", { text: "Requests to our sites (incoming)" }));
   table(main, p.hits, LIST_VIEWS.hits.columns());
   main.append(el("h2", { text: "Bans" }));
@@ -397,6 +405,7 @@ async function renderIP(ip) {
   table(main, p.alerts, LIST_VIEWS.alerts.columns().filter((c) => !["verdict", "feeds", "country"].includes(c.field)));
   main.append(el("h2", { text: "Breaker trips" }));
   table(main, p.trips, LIST_VIEWS.trips.columns());
+  if ((p.sightings || []).length) sightingsTable(main, p.sightings);
   if ((p.asn_changes || []).length) {
     main.append(el("h2", { text: "AS changes" }));
     table(main, p.asn_changes, [col("When", "ts", "time"), col("Old AS", "old_asn", "num"), col("Old owner", "old_owner"),
@@ -430,18 +439,45 @@ function connColumns() {
     col("Action", "action"), col("Count", "count", "num"), col("First", "first", "time"), col("Last", "last", "time")];
 }
 
+// What's known about the LAN device at an address, and how it was seen.
+function deviceCard(d) {
+  const card = el("div", { class: "card intel" });
+  if (!d) {
+    card.append(el("p", { class: "muted", style: "margin:0", text: "No DHCP lease, UniFi client event or neighbour-table entry for this address yet." }));
+    return card;
+  }
+  card.append(kv([
+    ["Name", d.name || "unknown"],
+    ["Hostname", d.hostname || undefined],
+    ["UniFi alias", d.alias && d.alias !== d.name ? d.alias : undefined],
+    ["MAC", d.mac],
+    ["Network", d.network || undefined],
+    ["Address tied to MAC", `${fmtTime(d.seen)} (${d.source})`],
+  ]));
+  return card;
+}
+
+function sightingsTable(main, rows) {
+  main.append(el("h2", { text: "Sightings (this address and every address its MAC used)" }));
+  table(main, rows, [col("Time", "ts", "time"), col("Address", "ip", "ip"), col("MAC", "mac"), col("Hostname", "hostname"),
+    col("Alias", "alias"), col("Network", "network"), col("Interface", "iface"), col("Event", "event"), col("Source", "source")]);
+}
+
 async function renderClient(ip) {
   const main = $main();
   main.replaceChildren(el("h1", { text: ip }), el("p", { class: "muted", text: "Loading…" }));
   const limit = state.limits.client || 500;
-  const p = await api("/api/dns", { client: ip, since: state.since, limit });
+  const [p, dev] = await Promise.all([api("/api/dns", { client: ip, since: state.since, limit }),
+    api(`/api/device/${encodeURIComponent(ip)}`).catch(() => ({}))]);
   const flaggedSet = new Set();
   try {
     const fl = await api("/api/domains", { since: state.since, flagged: 1, limit: 5000 });
     for (const d of fl || []) flaggedSet.add(d.domain);
   } catch { /* the lookups table still works */ }
-  main.replaceChildren(el("h1", { text: ip }),
-    el("p", { class: "lede" }, "What this LAN device looked up. ", el("a", { href: href("ip", ip), text: "Its address profile" }), "."));
+  const name = dev.device && dev.device.name;
+  main.replaceChildren(el("h1", { text: name ? `${name} (${ip})` : ip }),
+    el("p", { class: "lede" }, "What this LAN device looked up. ", el("a", { href: href("ip", ip), text: "Its address profile" }), "."),
+    el("div", { class: "grid" }, deviceCard(dev.device)));
   const rows = (p.lookups || []).map((r) => ({ ...r, flagged: flaggedSet.has(r.domain) }));
   rows.sort((a, b) => (b.flagged - a.flagged) || (b.count - a.count));
   main.append(el("h2", { text: `Lookups (${fmtNum(rows.length)}, ${rows.filter((r) => r.flagged).length} flagged)` }));
@@ -450,6 +486,7 @@ async function renderClient(ip) {
     col("First", "first", "time"), col("Last", "last", "time")]);
   main.append(el("h2", { text: "Logged connections" }));
   table(main, p.connections, connColumns());
+  if ((dev.sightings || []).length) sightingsTable(main, dev.sightings);
 }
 
 async function renderOverview() {

@@ -41,6 +41,7 @@ var indexSources = []indexSource{
 	{"dns_queries", "ts, client_ip, domain", []int{roleLAN, RoleLookup}},
 	{"dns_replies", "ts, answer", []int{RoleAnswer}},
 	{"connections", "ts, client_ip, dst_ip", []int{RoleConnSrc, RoleConn}},
+	{"lan_sightings", "ts, ip", []int{roleLAN}}, // DHCP, UniFi and neighbour-table sightings are LAN devices
 }
 
 type seenAgg struct {

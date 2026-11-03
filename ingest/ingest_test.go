@@ -10,6 +10,7 @@ import (
 	"dnscount/ingest/dns"
 	"dnscount/ingest/fw"
 	"dnscount/ingest/ids"
+	"dnscount/ingest/lan"
 )
 
 var now = time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)
@@ -328,5 +329,45 @@ func TestUnifiCEFContext(t *testing.T) {
 	if out.Direction != "outgoing" || out.SrcName != "Kitchen tablet" || out.SrcMAC != "02:00:00:00:00:03" ||
 		out.DstIP != "198.51.100.80" || out.DstName != "" || out.Action != "allowed" || out.Policy != "Malware" {
 		t.Errorf("outgoing = %+v", *out)
+	}
+}
+
+// Where LAN devices are: DHCP acks, UniFi client events and the router's
+// neighbour table (scripts/unifi-neighbors.sh).
+func TestLANSightings(t *testing.T) {
+	st, recs := run(t, "unifi-lan.log", ingest.Multi{ids.UniFi{}, lan.DHCP{}, lan.Neighbours{}})
+	// Skipped: DHCPREQUEST, "Updating leases", the admin event. Bad: the
+	// neighbour line with no valid address.
+	if want := (ingest.Stats{Lines: 10, Records: 6, Skipped: 3, Bad: 1}); st != want {
+		t.Errorf("stats = %+v, want %+v", st, want)
+	}
+	var got []ingest.Sighting
+	for _, r := range recs {
+		if r.Seen == nil {
+			t.Fatalf("record without a sighting: %+v", r)
+		}
+		s := *r.Seen
+		s.Hash, s.TS = "", time.Time{}
+		got = append(got, s)
+	}
+	want := []ingest.Sighting{
+		{IP: "192.168.1.230", MAC: "02:00:00:00:00:0b", Hostname: "Mac", Iface: "br0", Event: "dhcpack", Source: "dnsmasq-dhcp"},
+		{IP: "172.16.0.102", MAC: "02:00:00:00:00:0a", Iface: "br2", Event: "dhcpack", Source: "dnsmasq-dhcp"},
+		{IP: "192.168.1.131", MAC: "02:00:00:00:00:0c", Hostname: "android-4f2a", Alias: "Kitchen tablet", Network: "Default",
+			Event: "connected", Source: "unifi-cef"},
+		{MAC: "02:00:00:00:00:0c", Alias: "Kitchen tablet", Event: "disconnected", Source: "unifi-cef"},
+		{IP: "2606:4700:10::5", MAC: "02:00:00:00:00:0b", Iface: "br0", Event: "neighbour", Source: "router-neigh"},
+		{IP: "2606:4700:10::7", MAC: "02:00:00:00:00:0c", Iface: "br0", Event: "neighbour", Source: "router-neigh"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d sightings: %+v", len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("sighting %d =\n %+v\nwant\n %+v", i, got[i], want[i])
+		}
+	}
+	if ts := recs[2].Seen.TS; !ts.Equal(time.Date(2026, 11, 3, 14, 16, 23, 890000000, time.UTC)) {
+		t.Errorf("CEF sighting time = %v, want UNIFIutcTime", ts)
 	}
 }

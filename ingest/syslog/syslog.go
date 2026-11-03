@@ -1,6 +1,7 @@
 // Package syslog receives a UniFi router's remote syslog and stores the DNS
 // lookups/answers (dnsmasq lines), firewall-logged connections (kernel
-// lines) and IDS/IPS alerts (CEF security events) it carries.
+// lines), IDS/IPS alerts (CEF security events), and where LAN devices are
+// (DHCP leases, UniFi client events, the router's neighbour table) it carries.
 //
 // Setup: in UniFi Network, Settings → CyberSecure/System → Remote Logging
 // (syslog / SIEM server), point it at the host running
@@ -44,6 +45,7 @@ import (
 	"dnscount/ingest/dns"
 	"dnscount/ingest/fw"
 	"dnscount/ingest/ids"
+	"dnscount/ingest/lan"
 	"dnscount/store"
 )
 
@@ -124,7 +126,7 @@ func New(cfg Config) (*Listener, error) {
 			Name: "syslog-not-allowed", Window: time.Minute, Cooldown: 2 * cfg.Cooldown, MaxBad: 1,
 			Now: cfg.Now, OnTrip: cfg.OnTrip, OnEnd: cfg.OnEnd,
 		}),
-		parser: ingest.Multi{dns.Dnsmasq{}, fw.IPTables{}, ids.UniFi{}},
+		parser: ingest.Multi{dns.Dnsmasq{}, fw.IPTables{}, ids.UniFi{}, lan.DHCP{}, lan.Neighbours{}},
 		dedup:  ingest.NewDeduper(),
 	}, nil
 }

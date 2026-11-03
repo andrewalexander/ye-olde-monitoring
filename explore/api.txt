@@ -51,13 +51,24 @@ Shared with the admin API (alerts and bans gain the fields above):
 /api/clients?[since=7d]
   LAN devices: lookups, distinct domains, new domains, flagged domains
   (directly or through what they resolved to) with up to 5 examples.
+  Each also has "name", "mac" and "network" when a sighting (below) ties
+  its address to a device.
+
+/api/device/{ip}
+  The LAN device at an address: {"device": {"ip","mac","name","hostname",
+  "alias","network","seen","source"}, "sightings": [...]}, the sightings
+  being every DHCP lease, UniFi client event and neighbour-table entry for
+  this address or any MAC seen at it, newest first. name is the alias set
+  in UniFi if any (not its default "hostname xx:yy"), else the hostname.
+  An IPv6 address is named through its MAC. Also on /api/ip/{ip} for LAN
+  addresses, as "device" and "sightings".
 
 /api/flagged?[since=30d][&verdict=malicious,suspicious|all|reserved][&limit=100]
   Every listed indicator seen in the window, worst and newest first.
   verdict=reserved (alone or with others) adds special-purpose addresses
   and names, which are never flagged otherwise; they sort last.
   [{"indicator","kind","direction": in|out|both,"first_seen","last_seen",
-    "hits","sites","bans","alerts","clients":[{"ip","count"}],
+    "hits","sites","bans","alerts","clients":[{"ip","name","count"}],
     "via_domains", ...intel}]
 
 /api/feeds

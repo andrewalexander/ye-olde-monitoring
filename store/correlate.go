@@ -17,6 +17,7 @@ import (
 // ClientCount is a LAN device and how many times it did something.
 type ClientCount struct {
 	IP    string `json:"ip"`
+	Name  string `json:"name,omitempty"` // from DHCP, UniFi or the neighbour table
 	Count int64  `json:"count"`
 }
 
@@ -441,6 +442,8 @@ func (s *Store) Domains(q ListQuery) ([]DomainRow, error) {
 type ClientRow struct {
 	IP             string    `json:"ip"`
 	Name           string    `json:"name,omitempty"`
+	MAC            string    `json:"mac,omitempty"`
+	Network        string    `json:"network,omitempty"`
 	Lookups        int64     `json:"lookups"`
 	Domains        int64     `json:"domains"`
 	NewDomains     int64     `json:"new_domains"`
@@ -529,6 +532,22 @@ func (s *Store) Clients(since time.Time) ([]ClientRow, error) {
 	slices.SortFunc(out, func(a, b ClientRow) int {
 		return cmp.Or(cmp.Compare(b.Flagged, a.Flagged), cmp.Compare(b.Lookups, a.Lookups), strings.Compare(a.IP, b.IP))
 	})
+	ips := make([]string, len(out))
+	for i, c := range out {
+		ips[i] = c.IP
+	}
+	dev, err := s.Devices(ips, time.Time{})
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if d, ok := dev[out[i].IP]; ok {
+			out[i].MAC, out[i].Network = d.MAC, d.Network
+			if out[i].Name == "" {
+				out[i].Name = d.Name
+			}
+		}
+	}
 	return out, nil
 }
 
@@ -725,16 +744,20 @@ func (s *Store) clientCounts(domains []string, since string) ([]ClientCount, err
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []ClientCount
 	for rows.Next() {
 		var c ClientCount
 		if err := rows.Scan(&c.IP, &c.Count); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, s.nameCounts(out)
 }
 
 // ResolvedFrom is a name that resolved to an address, and who looked it up.
@@ -766,6 +789,10 @@ type IPProfile struct {
 	Trips      []Trip         `json:"trips"`
 	ResolvedBy []ResolvedFrom `json:"resolved_from"`
 	ASNChanges []ASNChange    `json:"asn_changes,omitempty"`
+	// For LAN addresses: the device there now, and its sightings (DHCP,
+	// UniFi, neighbour table), across every address it has used.
+	Device    *Device    `json:"device,omitempty"`
+	Sightings []Sighting `json:"sightings,omitempty"`
 }
 
 // IPProfile gathers one address's activity since `since` (its history
@@ -783,6 +810,18 @@ func (s *Store) IPProfile(ip string, since, now time.Time) (IPProfile, error) {
 	p.Intel = intel[ip]
 	if p.History, err = s.IPHistory(ip); err != nil {
 		return p, err
+	}
+	if p.LAN {
+		dev, err := s.Devices([]string{ip}, time.Time{})
+		if err != nil {
+			return p, err
+		}
+		if d, ok := dev[ip]; ok {
+			p.Device = &d
+		}
+		if p.Sightings, err = s.DeviceSightings(ip, 50); err != nil {
+			return p, err
+		}
 	}
 	if p.Hits, err = s.Hits(HitFilter{IP: ip, Since: since, Limit: 50}); err != nil {
 		return p, err
@@ -901,4 +940,17 @@ func (s *Store) DomainProfile(d string, since time.Time) (DomainProfile, error) 
 		p.Answers[i].Intel = ai[p.Answers[i].Answer]
 	}
 	return p, nil
+}
+
+// nameCounts names the LAN devices in counts.
+func (s *Store) nameCounts(cs []ClientCount) error {
+	ips := make([]string, len(cs))
+	for i, c := range cs {
+		ips[i] = c.IP
+	}
+	dev, err := s.Devices(ips, time.Time{})
+	for i := range cs {
+		cs[i].Name = dev[cs[i].IP].Name
+	}
+	return err
 }

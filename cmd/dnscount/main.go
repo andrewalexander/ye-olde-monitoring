@@ -35,6 +35,7 @@ import (
 	"dnscount/ingest/f2b"
 	"dnscount/ingest/fw"
 	"dnscount/ingest/ids"
+	"dnscount/ingest/lan"
 	"dnscount/ingest/syslog"
 	"dnscount/server"
 	"dnscount/store"
@@ -46,7 +47,7 @@ commands:
   serve          public counter + /ingest collector + localhost admin API
   syslog         receive UniFi remote syslog (DNS lookups, firewall logs)
   ingest-access  import nginx/apache "combined" or caddy JSON access logs
-  ingest-dns     import dnsmasq (UniFi, Pi-hole), unifi (dnsmasq+firewall+IDS) or adguard logs
+  ingest-dns     import dnsmasq (UniFi, Pi-hole), unifi (dnsmasq+firewall+IDS+LAN devices) or adguard logs
   ingest-bans    import fail2ban's log (journalctl -u fail2ban) to check bans held
   report         hits | dns | alerts | bans | flagged | trips | trip <id>
   check          run data sanity checks
@@ -236,7 +237,7 @@ func ingestAccess(args []string) error {
 func ingestDNS(args []string) error {
 	fs := flag.NewFlagSet("ingest-dns", flag.ExitOnError)
 	db := dbFlag(fs)
-	format := fs.String("format", "dnsmasq", "dnsmasq (UniFi, Pi-hole) | unifi (dnsmasq, firewall and IDS/IPS lines, e.g. syslog -raw files or the router's threat.log) | adguard")
+	format := fs.String("format", "dnsmasq", "dnsmasq (UniFi, Pi-hole) | unifi (dnsmasq, firewall, IDS/IPS and LAN-device lines, e.g. syslog -raw files or the router's threat.log) | adguard")
 	follow := fs.Bool("follow", false, "keep reading as the file grows (like tail -f)")
 	fs.Parse(args)
 	var p ingest.LineParser
@@ -244,7 +245,7 @@ func ingestDNS(args []string) error {
 	case "dnsmasq", "pihole":
 		p = dns.Dnsmasq{}
 	case "unifi":
-		p = ingest.Multi{dns.Dnsmasq{}, fw.IPTables{}, ids.UniFi{}}
+		p = ingest.Multi{dns.Dnsmasq{}, fw.IPTables{}, ids.UniFi{}, lan.DHCP{}, lan.Neighbours{}}
 	case "adguard":
 		p = dns.AdGuard{}
 	default:

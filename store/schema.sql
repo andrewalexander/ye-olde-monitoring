@@ -138,3 +138,23 @@ CREATE TABLE IF NOT EXISTS bans (
 );
 CREATE INDEX IF NOT EXISTS bans_ip ON bans(ip, jail, ts);
 CREATE INDEX IF NOT EXISTS bans_ts ON bans(ts);
+
+-- LAN devices seen at an address: DHCP leases, UniFi client events and the
+-- router's neighbour table. A device's name at a time is its latest
+-- sighting at or before then; IPv6 addresses get theirs through the MAC.
+CREATE TABLE IF NOT EXISTS lan_sightings (
+	id        INTEGER PRIMARY KEY,
+	ts        TEXT NOT NULL,
+	ip        TEXT NOT NULL DEFAULT '', -- '' when the event had only a MAC
+	mac       TEXT NOT NULL,
+	hostname  TEXT NOT NULL DEFAULT '',
+	alias     TEXT NOT NULL DEFAULT '',
+	network   TEXT NOT NULL DEFAULT '',
+	iface     TEXT NOT NULL DEFAULT '',
+	event     TEXT NOT NULL DEFAULT '',
+	source    TEXT NOT NULL,
+	line_hash TEXT NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS lan_sightings_ip ON lan_sightings(ip, ts);
+CREATE INDEX IF NOT EXISTS lan_sightings_mac ON lan_sightings(mac, ts);
+CREATE INDEX IF NOT EXISTS lan_sightings_ts ON lan_sightings(ts);
