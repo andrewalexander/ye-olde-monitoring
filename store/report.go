@@ -190,7 +190,6 @@ func (s *Store) group(q GroupQuery, table string, cols []string, filter string, 
 type HitFilter struct {
 	Site, IP string
 	Status   string // 404 or 4xx
-	HostKind string // name | ip: how the client addressed us (see HostKind)
 	Since    time.Time
 	Limit    int
 }
@@ -200,9 +199,6 @@ func (s *Store) Hits(f HitFilter) ([]hit.Hit, error) {
 	if f.Limit <= 0 {
 		f.Limit = 100
 	}
-	if f.HostKind != "" && f.HostKind != HostIP && f.HostKind != HostName {
-		return nil, BadQueryError("host_kind must be name or ip")
-	}
 	lo, hi, err := statusRange(f.Status)
 	if err != nil {
 		return nil, err
@@ -210,8 +206,7 @@ func (s *Store) Hits(f HitFilter) ([]hit.Hit, error) {
 	rows, err := s.query(`SELECT line_hash, ts, site, source, client_ip, forwarded_for, method, host, path,
 		query, status, bytes, user_agent, referer FROM hits
 		WHERE ts >= ? AND (? = '' OR site = ?) AND (? = '' OR client_ip = ?) AND status BETWEEN ? AND ?
-		AND (? = '' OR (? = 'ip' AND `+hostIsIP+`) OR (? = 'name' AND host != '' AND NOT `+hostIsIP+`))
-		ORDER BY ts DESC LIMIT ?`, fmtTime(f.Since), f.Site, f.Site, f.IP, f.IP, lo, hi, f.HostKind, f.HostKind, f.HostKind, f.Limit)
+		ORDER BY ts DESC LIMIT ?`, fmtTime(f.Since), f.Site, f.Site, f.IP, f.IP, lo, hi, f.Limit)
 	if err != nil {
 		return nil, err
 	}

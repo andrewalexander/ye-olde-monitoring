@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"dnscount/enrich"
+	"dnscount/hit"
 )
 
 // The queries here need the explorer's database attached as "enrich"
@@ -52,8 +53,6 @@ type InboundIP struct {
 	IP            string    `json:"ip"`
 	Hits          int64     `json:"hits"`
 	Errors4xx     int64     `json:"errors_4xx"`
-	ByName        int64     `json:"hits_by_name"` // Host header was a hostname
-	ByIP          int64     `json:"hits_by_ip"`   // Host header was a bare IP: typical of scanners
 	First         time.Time `json:"first,omitzero"`
 	Last          time.Time `json:"last,omitzero"`
 	Sites         []string  `json:"sites,omitempty"`
@@ -124,22 +123,20 @@ func (s *Store) InboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 		return m[k]
 	}
 	rows, err := s.query(`SELECT client_ip, count(*), sum(status BETWEEN 400 AND 499), min(ts), max(ts),
-		group_concat(DISTINCT site), sum(`+hostIsIP+`), sum(host != '' AND NOT `+hostIsIP+`)
-		FROM hits WHERE ts >= ? GROUP BY client_ip`, since)
+		group_concat(DISTINCT site) FROM hits WHERE ts >= ? GROUP BY client_ip`, since)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var ip, first, last string
 		var sites sql.NullString
-		var n, e4, byIP, byName int64
-		if err := rows.Scan(&ip, &n, &e4, &first, &last, &sites, &byIP, &byName); err != nil {
+		var n, e4 int64
+		if err := rows.Scan(&ip, &n, &e4, &first, &last, &sites); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		if r := get(ip); r != nil {
 			r.Hits, r.Errors4xx, r.First, r.Last = n, e4, parseTime(first), parseTime(last)
-			r.ByIP, r.ByName = byIP, byName
 			if sites.String != "" {
 				r.Sites = strings.Split(sites.String, ",")
 			}
@@ -713,7 +710,7 @@ type IPProfile struct {
 	LAN        bool           `json:"lan"`
 	Intel      *Intel         `json:"intel,omitempty"`
 	History    IPHistory      `json:"history"`
-	Hits       []HitRow       `json:"hits"`
+	Hits       []hit.Hit      `json:"hits"`
 	Bans       []Ban          `json:"bans"`
 	Alerts     []Alert        `json:"alerts"`
 	Trips      []Trip         `json:"trips"`
@@ -737,11 +734,9 @@ func (s *Store) IPProfile(ip string, since, now time.Time) (IPProfile, error) {
 	if p.History, err = s.IPHistory(ip); err != nil {
 		return p, err
 	}
-	hits, err := s.Hits(HitFilter{IP: ip, Since: since, Limit: 50})
-	if err != nil {
+	if p.Hits, err = s.Hits(HitFilter{IP: ip, Since: since, Limit: 50}); err != nil {
 		return p, err
 	}
-	p.Hits = WithHostKind(hits)
 	if p.Bans, err = s.Bans(BanFilter{IP: ip, Since: since, Limit: 50}, now); err != nil {
 		return p, err
 	}
