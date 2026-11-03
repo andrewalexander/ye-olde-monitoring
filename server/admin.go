@@ -20,11 +20,11 @@ func (s *Server) Admin(extraHealth func() map[string]any) http.Handler {
 	mux.HandleFunc("GET /api", serveAPIDoc)
 	mux.HandleFunc("GET /api/{$}", serveAPIDoc)
 	mux.HandleFunc("GET /api/hits", s.api(func(r *http.Request, p *params) (any, error) {
-		return st.Hits(store.HitFilter{Site: p.str("site"), IP: p.str("ip"), Since: p.since(), Limit: p.int("limit")})
+		return st.Hits(store.HitFilter{Site: p.str("site"), IP: p.str("ip"), Status: p.str("status"), Since: p.since(), Limit: p.int("limit")})
 	}))
 	mux.HandleFunc("GET /api/top", s.api(func(r *http.Request, p *params) (any, error) {
 		q := p.group("ip")
-		q.Site, q.IP = p.str("site"), p.str("ip")
+		q.Site, q.IP, q.Status = p.str("site"), p.str("ip"), p.str("status")
 		return st.TopHits(q)
 	}))
 	mux.HandleFunc("GET /api/dns", s.api(func(r *http.Request, p *params) (any, error) {

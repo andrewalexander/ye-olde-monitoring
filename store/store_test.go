@@ -299,31 +299,76 @@ func TestGroupRanks(t *testing.T) {
 		t.Errorf("-top path -ip = %v %v", byIP, err)
 	}
 
+	// The first column is ranked, and the rest only label its rows: 10.0.0.2 has
+	// the fewest hits, so it's first even though 10.0.0.1 has a rarer combination.
+	if _, err := st.InsertRecords([]ingest.Record{
+		web("d", 4, "10.0.0.1", "/once"), web("e", 4, "10.0.0.3", "/x"), web("f", 5, "10.0.0.3", "/y"),
+		web("g", 6, "10.0.0.3", "/z"), web("h", 7, "10.0.0.3", "/z"),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	multi, err := st.TopHits(store.GroupQuery{By: "ip,path", Rank: store.RankBottom})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(multi) != 2 || multi[0].Count != 1 || multi[0].Key != "10.0.0.2\t/theirs" ||
-		multi[0].Keys[0] != "10.0.0.2" || multi[0].Keys[1] != "/theirs" || multi[1].Count != 2 {
-		t.Errorf("-bottom ip,path = %+v", multi)
+	if want := "10.0.0.2\t/theirs,10.0.0.1\t/mine,10.0.0.1\t/once,10.0.0.3\t/z,10.0.0.3\t/x,10.0.0.3\t/y"; keys(multi) != want {
+		t.Errorf("-bottom ip,path = %q, want %q", keys(multi), want)
+	}
+	if m := multi[1]; m.Count != 2 || m.Total != 3 || m.Keys[0] != "10.0.0.1" || m.Keys[1] != "/mine" {
+		t.Errorf("row = %+v", m)
+	}
+	busiest, err := st.TopHits(store.GroupQuery{By: "ip,path"})
+	if err != nil || !strings.HasPrefix(keys(busiest), "10.0.0.3\t/z,") {
+		t.Errorf("-top ip,path = %q %v", keys(busiest), err)
 	}
 	// status is an integer column, so it has to come back as text too.
 	mixed, err := st.TopHits(store.GroupQuery{By: "status,method", IP: "10.0.0.2"})
 	if err != nil || len(mixed) != 1 || mixed[0].Key != "200\tGET" {
 		t.Errorf("-top status,method = %+v %v", mixed, err)
 	}
-	newMulti, err := st.DNSTop(store.GroupQuery{By: "domain,client", Rank: store.RankNew, Since: at(9)})
+	// New goes by the first column too: fresh.test appeared at 8, and the new
+	// client at 9 doesn't make it new again.
+	newMulti, err := st.DNSTop(store.GroupQuery{By: "domain,client", Rank: store.RankNew, Since: at(5)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// fresh.test is old by itself, but this client asking for it is new.
-	if keys(newMulti) != "common.test\t10.0.0.2,fresh.test\t10.0.0.3" {
+	if keys(newMulti) != "fresh.test\t10.0.0.2,fresh.test\t10.0.0.3" || !newMulti[0].First.Equal(at(8)) {
 		t.Errorf("-new domain,client = %q", keys(newMulti))
+	}
+	none, err := st.DNSTop(store.GroupQuery{By: "domain,client", Rank: store.RankNew, Since: at(9)})
+	if err != nil || len(none) != 0 {
+		t.Errorf("nothing's domain is new since 9: %q %v", keys(none), err)
+	}
+
+	// Status filters both forms of the report, by code or by class.
+	if _, err := st.InsertRecords([]ingest.Record{
+		{Hit: &hit.Hit{Hash: "n1", TS: at(1), Site: "s", Source: "test", ClientIP: "10.0.0.9", Method: "GET", Path: "/missing", Status: 404}},
+		{Hit: &hit.Hit{Hash: "n2", TS: at(1), Site: "s", Source: "test", ClientIP: "10.0.0.9", Method: "GET", Path: "/denied", Status: 403}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for status, want := range map[string]string{"404": "/missing", "4xx": "/denied,/missing"} {
+		got, err := st.TopHits(store.GroupQuery{By: "path", Status: status, Rank: store.RankBottom})
+		if err != nil || keys(got) != want {
+			t.Errorf("status %s = %q %v, want %q", status, keys(got), err, want)
+		}
+	}
+	listed, err := st.Hits(store.HitFilter{Status: "404"})
+	if err != nil || len(listed) != 1 || listed[0].Path != "/missing" {
+		t.Errorf("list status 404 = %+v %v", listed, err)
 	}
 
 	var bad store.BadQueryError
 	if _, err := st.TopHits(store.GroupQuery{By: "password"}); !errors.As(err, &bad) {
 		t.Errorf("bad by = %v", err)
+	}
+	for _, status := range []string{"abc", "9xx", "99", "1000", "4x"} {
+		if _, err := st.TopHits(store.GroupQuery{By: "ip", Status: status}); !errors.As(err, &bad) {
+			t.Errorf("status %q = %v", status, err)
+		}
+		if _, err := st.Hits(store.HitFilter{Status: status}); !errors.As(err, &bad) {
+			t.Errorf("list status %q = %v", status, err)
+		}
 	}
 	if _, err := st.TopHits(store.GroupQuery{By: "ip,password"}); !errors.As(err, &bad) {
 		t.Errorf("bad by in a list = %v", err)

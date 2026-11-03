@@ -126,7 +126,8 @@ dnscount report hits -top path -ip 198.51.100.4  # grouping honors -site and -ip
 dnscount report hits -bottom path -since 7d  # rarest first
 dnscount report dns -bottom domain -since 7d
 dnscount report dns -new domain              # first seen in the last 24h (or -since)
-dnscount report hits -bottom ua,method,path,ip -since 7d  # group by a combination; values print in full
+dnscount report hits -bottom ua,method,path,ip -since 7d  # ranks by the first field; the rest label its rows
+dnscount report hits -top path -status 404   # -status takes a code or a class like 4xx
 dnscount report trips -since 24h             # circuit-breaker trips
 dnscount report trip 12                      # everything recorded about one trip
 dnscount check                               # data sanity checks

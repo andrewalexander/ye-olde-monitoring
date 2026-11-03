@@ -33,12 +33,16 @@ func ParseSince(s string, now time.Time) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("since: %q is not a duration (24h, 7d), RFC 3339 time or date", s)
 }
 
-// KV is one row of a grouped report. Keys holds each column's value when
-// grouping by several, with Key tab-joining them. First is only set for RankNew.
+// KV is one row of a grouped report. With several columns, the first one is what
+// gets ranked and the rest label its rows: Keys holds each column's value, Key
+// tab-joins them, Count is this combination, and Total is the first column's
+// value across all its rows. First is only set for RankNew, and is when the first
+// column's value first appeared.
 type KV struct {
 	Key   string    `json:"key"`
 	Keys  []string  `json:"keys,omitempty"`
 	Count int64     `json:"count"`
+	Total int64     `json:"total,omitempty"`
 	First time.Time `json:"first,omitzero"`
 }
 
@@ -56,6 +60,7 @@ const (
 type GroupQuery struct {
 	By       string // one column, or several separated by commas
 	Site, IP string // hits only; empty matches everything
+	Status   string // hits only; 404 or 4xx; empty matches everything
 	Since    time.Time
 	Limit    int
 	Rank     Rank
@@ -79,8 +84,27 @@ var hitColumns = map[string]string{
 	"host": "host", "status": "status", "method": "method", "referer": "referer",
 }
 
+// statusRange turns a status filter (404, 4xx, or empty for any) into a range.
+func statusRange(status string) (lo, hi int, err error) {
+	if status == "" {
+		return 0, 999, nil
+	}
+	if len(status) == 3 && status[1:] == "xx" && status[0] >= '1' && status[0] <= '5' {
+		lo = int(status[0]-'0') * 100
+		return lo, lo + 99, nil
+	}
+	if n, err := strconv.Atoi(status); err == nil && n >= 100 && n <= 599 {
+		return n, n, nil
+	}
+	return 0, 0, BadQueryError(fmt.Sprintf("status %q is not a code (404) or a class (4xx)", status))
+}
+
 // TopHits groups hits by one or more of ip|path|ua|site|host|status|method|referer.
 func (s *Store) TopHits(q GroupQuery) ([]KV, error) {
+	lo, hi, err := statusRange(q.Status)
+	if err != nil {
+		return nil, err
+	}
 	var cols []string
 	for _, by := range strings.Split(q.By, ",") {
 		col, ok := hitColumns[by]
@@ -89,34 +113,44 @@ func (s *Store) TopHits(q GroupQuery) ([]KV, error) {
 		}
 		cols = append(cols, `CAST(`+col+` AS TEXT)`)
 	}
-	return s.group(q, `hits`, cols, `(? = '' OR site = ?) AND (? = '' OR client_ip = ?)`,
-		q.Site, q.Site, q.IP, q.IP)
+	return s.group(q, `hits`, cols, `(? = '' OR site = ?) AND (? = '' OR client_ip = ?) AND status BETWEEN ? AND ?`,
+		q.Site, q.Site, q.IP, q.IP, lo, hi)
 }
 
-// group runs a grouped report, keeping each row's filter in filter/args.
+// group runs a grouped report, keeping each row's filter in filter/args. Rows are
+// ranked by their first column's total, so all of one value's rows stay together,
+// with its most common combination first.
 func (s *Store) group(q GroupQuery, table string, cols []string, filter string, args ...any) ([]KV, error) {
 	if q.Limit <= 0 {
 		q.Limit = 25
 	}
-	// Columns are referred to by position: the keys, then the count, then the time.
 	n := len(cols)
-	keys := make([]string, n)
-	for i := range keys {
-		keys[i] = strconv.Itoa(i + 1)
+	names := make([]string, n)
+	selects := make([]string, n)
+	for i, col := range cols {
+		names[i] = "k" + strconv.Itoa(i)
+		selects[i] = col + " AS " + names[i]
 	}
-	byKeys := strings.Join(keys, ", ")
-	count, first := strconv.Itoa(n+1), strconv.Itoa(n+2)
-	stmt := `SELECT ` + strings.Join(cols, ", ") + `, count(*), min(ts) FROM ` + table + ` WHERE ` + filter
+	keys := strings.Join(names, ", ")
+	window := ` AND ts >= ?`
+	where, order := ``, `total DESC`
 	switch q.Rank {
 	case RankTop, "":
-		stmt += ` AND ts >= ? GROUP BY ` + byKeys + ` ORDER BY ` + count + ` DESC, ` + byKeys + ` LIMIT ?`
 	case RankBottom:
-		stmt += ` AND ts >= ? GROUP BY ` + byKeys + ` ORDER BY ` + count + `, ` + byKeys + ` LIMIT ?`
+		order = `total`
 	case RankNew:
-		stmt += ` GROUP BY ` + byKeys + ` HAVING min(ts) >= ? ORDER BY ` + first + ` DESC, ` + byKeys + ` LIMIT ?`
+		window, where, order = ``, ` WHERE firstseen >= ?`, `firstseen DESC`
 	default:
 		return nil, BadQueryError(fmt.Sprintf("unknown order %q (top|bottom|new)", q.Rank))
 	}
+	stmt := `WITH combos AS (
+			SELECT ` + strings.Join(selects, ", ") + `, count(*) AS n, min(ts) AS seen FROM ` + table + `
+			WHERE ` + filter + window + ` GROUP BY ` + keys + `
+		), ranked AS (
+			SELECT *, sum(n) OVER (PARTITION BY k0) AS total, min(seen) OVER (PARTITION BY k0) AS firstseen FROM combos
+		)
+		SELECT ` + keys + `, n, total, firstseen FROM ranked` + where + `
+		ORDER BY ` + order + `, k0, n DESC, ` + keys + ` LIMIT ?`
 	rows, err := s.db.Query(stmt, append(args, fmtTime(q.Since), q.Limit)...)
 	if err != nil {
 		return nil, err
@@ -125,13 +159,14 @@ func (s *Store) group(q GroupQuery, table string, cols []string, filter string, 
 	var out []KV
 	for rows.Next() {
 		var kv KV
+		var total int64
 		var firstTS string
 		vals := make([]sql.NullString, n)
-		dest := make([]any, 0, n+2)
+		dest := make([]any, 0, n+3)
 		for i := range vals {
 			dest = append(dest, &vals[i])
 		}
-		dest = append(dest, &kv.Count, &firstTS)
+		dest = append(dest, &kv.Count, &total, &firstTS)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
@@ -141,7 +176,7 @@ func (s *Store) group(q GroupQuery, table string, cols []string, filter string, 
 		}
 		kv.Key = strings.Join(parts, "\t")
 		if n > 1 {
-			kv.Keys = parts
+			kv.Keys, kv.Total = parts, total
 		}
 		if q.Rank == RankNew {
 			kv.First = parseTime(firstTS)
@@ -154,6 +189,7 @@ func (s *Store) group(q GroupQuery, table string, cols []string, filter string, 
 // HitFilter selects hits; empty fields match everything.
 type HitFilter struct {
 	Site, IP string
+	Status   string // 404 or 4xx
 	Since    time.Time
 	Limit    int
 }
@@ -163,10 +199,14 @@ func (s *Store) Hits(f HitFilter) ([]hit.Hit, error) {
 	if f.Limit <= 0 {
 		f.Limit = 100
 	}
+	lo, hi, err := statusRange(f.Status)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Query(`SELECT line_hash, ts, site, source, client_ip, forwarded_for, method, host, path,
 		query, status, bytes, user_agent, referer FROM hits
-		WHERE ts >= ? AND (? = '' OR site = ?) AND (? = '' OR client_ip = ?)
-		ORDER BY ts DESC LIMIT ?`, fmtTime(f.Since), f.Site, f.Site, f.IP, f.IP, f.Limit)
+		WHERE ts >= ? AND (? = '' OR site = ?) AND (? = '' OR client_ip = ?) AND status BETWEEN ? AND ?
+		ORDER BY ts DESC LIMIT ?`, fmtTime(f.Since), f.Site, f.Site, f.IP, f.IP, lo, hi, f.Limit)
 	if err != nil {
 		return nil, err
 	}

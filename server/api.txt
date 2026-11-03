@@ -23,9 +23,11 @@ Conventions
           bottom = rarest first, new = first seen inside since= (which then
           defaults to 24h), newest first, with counts from all time and a
           "first" time on each row.
-  by      for the /top endpoints. One field, or several separated by commas to
-          group by the combination, as in by=ua,method,path,ip. Each row then
-          also has "keys", with one value per field in the same order.
+  by      for the /top endpoints. One field, or several separated by commas,
+          as in by=ua,method,path,ip. The first field is what gets ranked, and
+          the rest label its rows. Each row then has "keys" with one value per
+          field, "count" for that combination, and "total" for the first field.
+  status  on /api/hits and /api/top: a code (404) or a class (4xx).
   errors  plain text body. 400 = bad parameter, 404 = no such thing,
           500 = server error.
 
@@ -88,7 +90,7 @@ POST /ingest
 ADMIN (all GET, all JSON)
 =========================
 
-/api/hits?[site=][&ip=][&since=][&limit=]
+/api/hits?[site=][&ip=][&status=][&since=][&limit=]
   Recent hits, newest first.
   [{"id","ts","site","source","client_ip","forwarded_for","method","host",
     "path","query","status","bytes","user_agent","referer"}]
@@ -100,7 +102,7 @@ ADMIN (all GET, all JSON)
     caddy       read from a Caddy JSON access log
     access-log  read from an nginx/apache access log
 
-/api/top?by=ip|path|ua|site|host|status|method|referer[&order=][&site=][&ip=][&since=][&limit=25]
+/api/top?by=ip|path|ua|site|host|status|method|referer[&order=][&site=][&ip=][&status=][&since=][&limit=25]
   Hit counts grouped by one field, biggest first. by defaults to ip.
   [{"key": "203.0.113.9", "count": 42}]
 
