@@ -1,0 +1,37 @@
+[Unit]
+Description=dnscount explorer: LAN table UI over a read-only view of the database
+Wants=dnscount-serve.service
+After=dnscount-serve.service
+
+[Service]
+User=dnscount
+Group=dnscount
+EnvironmentFile=/etc/dnscount/dnscount.env
+# Reads dnscount.db read-only; writes only explore.db. Put a LAN-only proxy in
+# front of it (it has no auth) and keep it on localhost.
+ExecStart=/usr/local/bin/dnscount explore -addr 127.0.0.1:8090
+Restart=on-failure
+RestartSec=5
+StateDirectory=dnscount
+UMask=0027
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressAllow=localhost
+IPAddressDeny=any
+# Never in the way of ingest.
+Nice=10
+CPUWeight=20
+IOSchedulingClass=idle
+MemoryHigh=512M
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly dnscount feed check (each feed is fetched only when due)
+
+[Timer]
+OnBootSec=2m
+OnCalendar=hourly
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

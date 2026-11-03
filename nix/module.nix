@@ -48,6 +48,14 @@ let
   jailPorts = concatStringsSep ";" (lib.mapAttrsToList (name: j: "${name}=${toString j.settings.port}")
     (lib.filterAttrs (_: j: builtins.isAttrs j && (j.settings or { }) ? port) config.services.fail2ban.jails));
   syslogListen = "udp://${cfg.syslog.address}:${toString cfg.syslog.port}";
+
+  # Feed flags shared by the explorer and the downloader.
+  feedArgs = lib.optionals (cfg.explore.feeds.disable != [ ]) [ "-feeds-disable" (concatStringsSep "," cfg.explore.feeds.disable) ]
+    ++ lib.optionals (cfg.explore.feeds.extra != { }) [
+      "-feeds-file"
+      (pkgs.writeText "dnscount-feeds.json" (builtins.toJSON
+        (lib.mapAttrsToList (name: f: f // { inherit name; }) cfg.explore.feeds.extra)))
+    ];
 in
 {
   options.services.dnscount = {
@@ -155,6 +163,61 @@ in
       };
     };
 
+    explore = {
+      enable = mkEnableOption ''
+        the explorer: a separate, low-priority process serving the LAN table UI
+        and its API from a read-only view of the database, with free threat
+        feeds matched locally (see docs/homelab.md)
+      '';
+      addr = mkOption {
+        type = types.str;
+        default = "127.0.0.1:8090";
+        description = "Where the explorer listens. No auth: only Caddy's LAN-only site should reach it.";
+      };
+      queryTimeout = mkOption {
+        type = types.str;
+        default = "10s";
+        description = "Per-request query deadline, so no page keeps a read open for long.";
+      };
+      feeds = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Download the threat feeds and the IP-to-ASN table hourly (each feed only when it's due).";
+        };
+        disable = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          example = [ "stevenblack" ];
+          description = "Built-in feeds to leave out (dnscount feeds list shows them).";
+        };
+        extra = mkOption {
+          type = types.attrsOf (types.submodule {
+            options = {
+              url = mkOption {
+                type = types.str;
+                description = "URL or local path. {ENV_VAR} is filled from environmentFile, e.g. {ABUSECH_AUTH_KEY}.";
+              };
+              kind = mkOption { type = types.enum [ "ip" "domain" ]; default = "ip"; };
+              format = mkOption { type = types.enum [ "plain" "hosts" "url" "spamhaus" ]; default = "plain"; };
+              verdict = mkOption { type = types.enum [ "malicious" "suspicious" "info" ]; default = "malicious"; };
+              interval = mkOption { type = types.str; default = "6h"; };
+              about = mkOption { type = types.str; default = ""; };
+            };
+          });
+          default = { };
+          example = lib.literalExpression ''{ mine = { url = "/etc/dnscount/bad-ips.txt"; interval = "10m"; }; }'';
+          description = "Your own feeds. A name matching a built-in one replaces it.";
+        };
+        environmentFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          example = "/var/lib/secrets/dnscount-feeds.env";
+          description = "File outside the Nix store with keys for feed URLs, e.g. ABUSECH_AUTH_KEY=....";
+        };
+      };
+    };
+
     backup = {
       enable = mkOption {
         type = types.bool;
@@ -259,6 +322,59 @@ in
         SupplementaryGroups = [ "systemd-journal" ];
         Restart = "always";
         RestartSec = 5;
+      };
+    };
+
+    # The explorer only reads dnscount.db (mode=ro), writes only explore.db,
+    # and runs at low CPU and IO priority, so it can't hold up ingest. It
+    # listens on localhost and never connects out; only dnscount-feeds does.
+    systemd.services.dnscount-explore = mkIf cfg.explore.enable {
+      description = "dnscount explorer: LAN table UI over a read-only view of the database";
+      wants = [ "dnscount-serve.service" ];
+      after = [ "dnscount-serve.service" ];
+      wantedBy = [ "multi-user.target" ];
+      environment.DNSCOUNT_DB = db;
+      serviceConfig = hardening // network // {
+        ExecStart = concatStringsSep " " ([
+          bin "explore"
+          "-addr" cfg.explore.addr
+          "-query-timeout" cfg.explore.queryTimeout
+          "-admin-url" "http://${cfg.serve.adminAddr}"
+        ] ++ map lib.escapeShellArg feedArgs);
+        IPAddressAllow = [ "localhost" ];
+        IPAddressDeny = "any";
+        ProtectProc = "invisible";
+        Nice = 10;
+        CPUWeight = 20;
+        IOSchedulingClass = "idle";
+        MemoryHigh = "512M";
+        MemoryMax = "1G";
+        Restart = "on-failure";
+        RestartSec = 5;
+      };
+    };
+
+    # Downloads only the feeds that are due; opens no database.
+    systemd.services.dnscount-feeds = mkIf (cfg.explore.enable && cfg.explore.feeds.enable) {
+      description = "dnscount: download threat feeds and the IP-to-ASN table";
+      wants = [ "network-online.target" ];
+      after = [ "network-online.target" ];
+      environment.DNSCOUNT_DB = db;
+      serviceConfig = hardening // network // {
+        Type = "oneshot";
+        ExecStart = concatStringsSep " " ([ bin "feeds" "update" ] ++ map lib.escapeShellArg feedArgs);
+        EnvironmentFile = lib.optional (cfg.explore.feeds.environmentFile != null) cfg.explore.feeds.environmentFile;
+        Nice = 10;
+        IOSchedulingClass = "idle";
+      };
+    };
+    systemd.timers.dnscount-feeds = mkIf (cfg.explore.enable && cfg.explore.feeds.enable) {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "2m";
+        OnCalendar = "hourly";
+        RandomizedDelaySec = "10m";
+        Persistent = true;
       };
     };
 
