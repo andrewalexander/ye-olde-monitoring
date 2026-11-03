@@ -310,6 +310,9 @@ func (s *Store) flaggedAnswers(since time.Time) (map[string]*AnswerIntel, error)
 		if err := rows.Scan(&d, &ip, &p, &v); err != nil {
 			return nil, err
 		}
+		if enrich.Reserved(ip) {
+			continue // e.g. ipv4only.arpa -> 192.0.0.170: not a host
+		}
 		a := out[d]
 		if a == nil {
 			a = &AnswerIntel{}
@@ -391,6 +394,16 @@ func (s *Store) Domains(q ListQuery) ([]DomainRow, error) {
 	for _, d := range out {
 		norm, _ := enrich.PublicDomain(d.Domain)
 		d.Intel, d.Answers, d.New = listed[norm], answers[d.Domain], fresh[norm]
+		if sp, ok := enrich.SpecialDomain(norm); ok {
+			in := &Intel{Special: &sp}
+			if d.Intel != nil {
+				in.Feeds = d.Intel.Feeds
+			}
+			if sp.Reserved {
+				in.Verdict = enrich.VerdictReserved
+			}
+			d.Intel = in
+		}
 		if q.Flagged && d.rank() < 2 {
 			continue
 		}
@@ -568,7 +581,7 @@ func (s *Store) Flagged(q FlaggedQuery) ([]FlaggedRow, error) {
 		FROM enrich.enrichment e JOIN enrich.indicators i ON i.indicator = e.indicator
 		WHERE e.listed = 1 AND i.last_seen >= ? AND e.verdict IN (`+in+`)
 		  AND i.indicator NOT IN (SELECT ip FROM enrich.lan_clients)
-		GROUP BY i.indicator ORDER BY rank DESC, i.last_seen DESC LIMIT ?`, append(args, q.Limit)...)
+		GROUP BY i.indicator ORDER BY rank DESC, i.last_seen DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -581,6 +594,14 @@ func (s *Store) Flagged(q FlaggedQuery) ([]FlaggedRow, error) {
 		if err := rows.Scan(&r.Indicator, &r.Kind, &role, &first, &last, &rank); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		// Reserved addresses (and names) aren't hosts: a list matching them
+		// says nothing, so they're never flagged. The limit applies after.
+		if enrich.Reserved(r.Indicator) {
+			continue
+		}
+		if len(out) == q.Limit {
+			break
 		}
 		r.First, r.Last = parseTime(first), parseTime(last)
 		switch {

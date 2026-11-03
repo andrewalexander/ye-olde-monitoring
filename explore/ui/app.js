@@ -140,7 +140,7 @@ function col(title, field, kind, extra) {
   if (kind === "verdict") {
     c.sorter = (a, b) => rank(a) - rank(b);
     c.headerFilter = "list";
-    c.headerFilterParams = { values: { "": "any", malicious: "malicious", suspicious: "suspicious", info: "info" } };
+    c.headerFilterParams = { values: { "": "any", malicious: "malicious", suspicious: "suspicious", info: "info", reserved: "reserved" } };
   }
   return c;
 }
@@ -341,13 +341,16 @@ function kv(pairs) {
 }
 
 function intelCard(intel) {
-  const card = el("div", { class: "card" });
-  if (!intel || (!intel.asn && !(intel.matches || []).length)) {
+  const card = el("div", { class: "card intel" });
+  if (!intel || (!intel.asn && !intel.special && !(intel.matches || []).length)) {
     card.append(el("p", { class: "muted", style: "margin:0", text: "Not on any list, and no AS known." }));
     return card;
   }
+  const sp = intel.special;
   card.append(kv([
     ["Verdict", intel.verdict ? badge(intel.verdict) : "none"],
+    ["Special-purpose", sp ? `${sp.name} (${sp.rfc})${sp.note ? ": " + sp.note : ""}` : undefined],
+    ["", sp && sp.reserved && (intel.feeds || []).length ? "Not a real host, so lists that include it (FireHOL lists every reserved range) don't count." : undefined],
     ["On lists", tags(intel.feeds)],
     ["AS", intel.asn ? `AS${intel.asn} ${intel.as_owner || ""}` : "unknown"],
     ["Country", intel.country || ""],
@@ -413,6 +416,7 @@ async function renderDomain(d) {
   main.append(el("h2", { text: "What it resolved to" }));
   table(main, p.answers, [col("Answer", "answer", "text", { formatter: (c) => /^[0-9a-f.:]+$/i.test(c.getValue()) ? ipLink(c.getValue()) : document.createTextNode(c.getValue()) }),
     col("Status", "status"), col("Verdict", "verdict", "verdict"), col("Feeds", "feeds", "tags"),
+    col("Special-purpose", "special", "text", { formatter: (c) => document.createTextNode(c.getValue() ? c.getValue().name : "") }),
     col("AS", "asn", "text", { formatter: (c) => document.createTextNode(asnText(c.getRow().getData())) }), col("Owner", "as_owner"), col("CC", "country"),
     col("Count", "count", "num"), col("Last", "last", "time")]);
   main.append(el("h2", { text: "Logged connections to those addresses" }));

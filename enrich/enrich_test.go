@@ -202,3 +202,37 @@ func TestLoadFeeds(t *testing.T) {
 		t.Errorf("feeds = %v", names)
 	}
 }
+
+func TestSpecialPurpose(t *testing.T) {
+	cases := []struct {
+		ind, name string
+		reserved  bool
+	}{
+		{"192.0.0.170", "NAT64/DNS64 discovery", true},
+		{"192.0.0.171", "NAT64/DNS64 discovery", true},
+		{"192.0.0.5", "IETF protocol assignments", true}, // the /24, when nothing more specific matches
+		{"198.19.1.1", "Benchmarking", true},
+		{"241.1.2.3", "Reserved (class E)", true},
+		{"203.0.113.9", "Documentation (TEST-NET-3)", false},
+		{"64:ff9b::808:808", "NAT64 well-known prefix", false},
+		{"2001:0:4136:e378::1", "Teredo", false},
+		{"2001:db8::1", "Documentation (IPv6)", false},
+		{"::ffff:192.0.0.170", "NAT64/DNS64 discovery", true},
+		{"ipv4only.arpa", "NAT64/DNS64 discovery", true},
+		{"IPv4only.arpa.", "NAT64/DNS64 discovery", true},
+	}
+	for _, c := range cases {
+		s, ok := SpecialFor(c.ind)
+		if !ok || s.Name != c.name || s.Reserved != c.reserved || s.RFC == "" {
+			t.Errorf("SpecialFor(%s) = %+v, %v; want %q reserved=%v", c.ind, s, ok, c.name, c.reserved)
+		}
+		if Reserved(c.ind) != c.reserved {
+			t.Errorf("Reserved(%s) = %v", c.ind, !c.reserved)
+		}
+	}
+	for _, ind := range []string{"8.8.8.8", "93.123.109.247", "2606:4700:4700::1", "example.com", "arpa", "x.ipv4only.arpa"} {
+		if s, ok := SpecialFor(ind); ok {
+			t.Errorf("SpecialFor(%s) = %+v, want none", ind, s)
+		}
+	}
+}

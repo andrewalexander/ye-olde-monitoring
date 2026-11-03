@@ -460,8 +460,12 @@ type Intel struct {
 	ASN     uint32 `json:"asn,omitempty"`
 	Owner   string `json:"as_owner,omitempty"`
 	Country string `json:"country,omitempty"`
-	// Verdict is the worst verdict among the lists it's on now.
+	// Verdict is the worst verdict among the lists it's on now, or
+	// "reserved" for a reserved special-purpose address or name, whatever
+	// lists it's on: not a real host, so never flagged.
 	Verdict string `json:"verdict,omitempty"`
+	// Special is set for special-purpose addresses and names (RFC 6890).
+	Special *enrich.Special `json:"special,omitempty"`
 	// Feeds are the lists it's on now.
 	Feeds []string `json:"feeds,omitempty"`
 	// Matches has every row, including lists it has dropped off. Only set
@@ -510,7 +514,7 @@ func (s *Store) Intel(inds []string, history bool) (map[string]*Intel, error) {
 			in := get(ind)
 			if m.Listed {
 				in.Feeds = append(in.Feeds, m.Provider)
-				if enrich.VerdictRank(m.Verdict) > enrich.VerdictRank(in.Verdict) {
+				if !enrich.Reserved(ind) && enrich.VerdictRank(m.Verdict) > enrich.VerdictRank(in.Verdict) {
 					in.Verdict = m.Verdict
 				}
 			}
@@ -539,6 +543,16 @@ func (s *Store) Intel(inds []string, history bool) (map[string]*Intel, error) {
 		rows.Close()
 		if err := rows.Err(); err != nil {
 			return nil, err
+		}
+	}
+	// Special-purpose addresses and names get their context, listed or not.
+	for _, ind := range inds {
+		if sp, ok := enrich.SpecialFor(ind); ok {
+			in := get(ind)
+			in.Special = &sp
+			if sp.Reserved {
+				in.Verdict = enrich.VerdictReserved
+			}
 		}
 	}
 	return out, nil

@@ -127,6 +127,8 @@ h2 { font-size: 15px; margin: 24px 0 8px; }
 .v-malicious { background: var(--malicious-bg); color: var(--ink); }
 .v-suspicious { background: var(--suspicious-bg); color: var(--ink); }
 .v-info { background: var(--info-bg); color: var(--ink-2); }
+/* Not a real host (RFC 6890 reserved ranges, ipv4only.arpa): outlined, never filled like a finding. */
+.v-reserved { background: transparent; color: var(--ink-2); border: 1px dashed var(--axis); font-weight: 500; }
 .leak { color: var(--critical); font-weight: 700; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .tag { font-size: 12px; padding: 0 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--ink-2); }
@@ -179,3 +181,6 @@ h2 { font-size: 15px; margin: 24px 0 8px; }
 .tabulator .tabulator-footer select { background: var(--surface); color: var(--ink); }
 .tabulator .tabulator-header .tabulator-col .tabulator-col-content .tabulator-col-sorter .tabulator-arrow { border-bottom-color: var(--muted); }
 .chart .marker { stroke: var(--surface); stroke-width: 2; }
+
+/* The intel card holds long notes: give it a row of its own. */
+.grid .card.intel { grid-column: 1 / -1; max-width: 760px; }

@@ -246,8 +246,28 @@ func (x *Explorer) overview(st *store.Store) (map[string]any, error) {
 		counts[t.table] = c
 	}
 	var inds, flagged int64
-	if err := st.DB().QueryRowContext(st.Context(), `SELECT count(*), (SELECT count(DISTINCT indicator) FROM enrich.enrichment
-		WHERE listed = 1 AND verdict IN ('malicious','suspicious')) FROM enrich.indicators`).Scan(&inds, &flagged); err != nil {
+	if err := st.DB().QueryRowContext(st.Context(), `SELECT count(*) FROM enrich.indicators`).Scan(&inds); err != nil {
+		return nil, err
+	}
+	// Flagged as the Flagged view counts it: listed malicious or suspicious,
+	// not a LAN device, not a reserved address.
+	rows, err := st.DB().QueryContext(st.Context(), `SELECT DISTINCT indicator FROM enrich.enrichment
+		WHERE listed = 1 AND verdict IN ('malicious','suspicious')
+		AND indicator NOT IN (SELECT ip FROM enrich.lan_clients)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ind string
+		if err := rows.Scan(&ind); err != nil {
+			return nil, err
+		}
+		if !enrich.Reserved(ind) {
+			flagged++
+		}
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	x.statusMu.Lock()

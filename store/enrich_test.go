@@ -303,3 +303,60 @@ func TestFlaggedInAndOut(t *testing.T) {
 		t.Errorf("rematch didn't remove: listed %v removed %q", listed, removed)
 	}
 }
+
+// ipv4only.arpa answers 192.0.0.170/171 (NAT64 discovery). FireHOL lists
+// every reserved range, so the address matches a list, but it's not a host:
+// it gets the "reserved" verdict and its context, and is never flagged.
+func TestReservedAddressesAreContextNotFindings(t *testing.T) {
+	x := openExplorer(t)
+	x.primary.InsertRecords([]ingest.Record{
+		{Query: &ingest.DNSQuery{Hash: "q", TS: now, ClientIP: "192.168.1.20", Domain: "ipv4only.arpa", QType: "AAAA", Source: "t"}},
+		{Reply: &ingest.DNSReply{Hash: "r1", TS: now, Domain: "ipv4only.arpa", Answer: "192.0.0.170", Status: "reply", Source: "t"}},
+		{Reply: &ingest.DNSReply{Hash: "r2", TS: now, Domain: "ipv4only.arpa", Answer: "192.0.0.171", Status: "reply", Source: "t"}},
+	})
+	x.index(t)
+	bogons := list(t, "firehol1", "plain", enrich.Suspicious, "192.0.0.0/24\n240.0.0.0/4\n")
+	if _, err := x.enr.MatchNew(store.Lists{Lists: []*enrich.List{bogons}}, now); err != nil {
+		t.Fatal(err)
+	}
+	since := now.AddDate(0, 0, -1)
+
+	fl, err := x.ro.Flagged(store.FlaggedQuery{Since: since})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fl) != 0 {
+		t.Errorf("reserved addresses flagged: %+v", fl)
+	}
+	in, err := x.ro.Intel([]string{"192.0.0.170", "ipv4only.arpa"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := in["192.0.0.170"]
+	if a == nil || a.Verdict != enrich.VerdictReserved || a.Special == nil || a.Special.RFC != "RFC 7050" ||
+		!slices.Contains(a.Feeds, "feed:firehol1") || a.Flagged() {
+		t.Errorf("192.0.0.170 intel: %+v", a)
+	}
+	if d := in["ipv4only.arpa"]; d == nil || d.Verdict != enrich.VerdictReserved || d.Special == nil {
+		t.Errorf("ipv4only.arpa intel: %+v", d)
+	}
+
+	doms, err := x.ro.Domains(store.ListQuery{Since: since, Flagged: true})
+	if err != nil || len(doms) != 0 {
+		t.Errorf("flagged domains: %+v %v", doms, err)
+	}
+	doms, _ = x.ro.Domains(store.ListQuery{Since: since})
+	if len(doms) != 1 || doms[0].Domain != "ipv4only.arpa" || doms[0].Verdict != enrich.VerdictReserved || doms[0].Answers != nil {
+		t.Errorf("domains: %+v", doms)
+	}
+	cl, _ := x.ro.Clients(since)
+	if len(cl) != 1 || cl[0].Flagged != 0 {
+		t.Errorf("clients: %+v", cl)
+	}
+	// The address's page still says who looked it up.
+	p, err := x.ro.IPProfile("192.0.0.170", since, now)
+	if err != nil || len(p.ResolvedBy) != 1 || p.ResolvedBy[0].Domain != "ipv4only.arpa" ||
+		len(p.ResolvedBy[0].Clients) != 1 || p.ResolvedBy[0].Clients[0].IP != "192.168.1.20" {
+		t.Errorf("profile: %+v %v", p.ResolvedBy, err)
+	}
+}

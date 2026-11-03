@@ -11,7 +11,13 @@ since= (24h, 7d, a time), limit=, plain-text errors. Requests have a
 deadline (-query-timeout); one that runs past it is a 503.
 
 Rows that carry an address or domain also carry what's known about it:
-  "verdict"   worst verdict of the lists it's on now: malicious|suspicious|info
+  "verdict"   worst verdict of the lists it's on now: malicious|suspicious|info,
+              or "reserved" for a reserved special-purpose address or name
+              (RFC 6890 ranges such as 192.0.0.170, ipv4only.arpa): not a
+              real host, so never flagged, whatever lists include it
+  "special"   for special-purpose addresses and names: {"name","rfc","note",
+              "reserved"}. Translation prefixes (NAT64 64:ff9b::/96, Teredo,
+              6to4) are context only and keep their verdicts.
   "feeds"     those lists, as feed:<name>
   "asn", "as_owner", "country"   from iptoasn
 
