@@ -18,7 +18,7 @@ import (
 const reportUsage = `usage:
   dnscount report hits  [-top|-bottom|-new ip|path|ua|site|host|status|method|referer[,...]] [-site s] [-ip x] [-status 404|4xx] [-since 24h] [-limit n]
   dnscount report dns   -domain example.com | -client 192.168.1.5 | -top|-bottom|-new domain|client[,...]  [-since 7d]
-  dnscount report alerts [-top signature|src|dst|category|action] [-ip x] [-action allowed|blocked] [-since 24h]
+  dnscount report alerts [-top signature|src|dst|category|action|direction|policy|dst_name] [-ip x] [-action allowed|blocked] [-since 24h]
   dnscount report bans  [-ip x] [-jail name] [-since 7d]
   dnscount report flagged [-since 30d] [-verdict malicious,suspicious|all] [-enrich-db explore.db]
   dnscount report trips [-since 24h] [-ip x] [-breaker name]
@@ -145,7 +145,7 @@ func report(args []string) error {
 			return fmt.Errorf("report dns needs -domain, -client, -top, -bottom or -new")
 		}
 	case "alerts":
-		top := fs.String("top", "", "count alerts by signature, src, dst, category or action instead of listing them")
+		top := fs.String("top", "", "count alerts by signature, src, dst, category, action, direction, policy, src_name or dst_name instead of listing them")
 		ip := fs.String("ip", "", "only alerts from or to this IP")
 		action := fs.String("action", "", "only allowed or blocked alerts")
 		run = func(st *store.Store, since time.Time) error {
@@ -162,10 +162,19 @@ func report(args []string) error {
 				return err
 			}
 			w := table()
-			fmt.Fprintln(w, "TIME\tACTION\tFROM\tTO\tSIGNATURE\tCATEGORY\tSRC HITS")
+			fmt.Fprintln(w, "TIME\tACTION\tDIR\tFROM\tTO\tSIGNATURE\tPOLICY\tSRC HITS")
 			for _, a := range alerts {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\n", localTime(a.TS), a.Action,
-					joinPort(a.SrcIP, a.SrcPort), joinPort(a.DstIP, a.DstPort), trunc(a.Signature, 60), a.Category, a.SrcHits)
+				dir := a.Direction
+				if dir == "" {
+					dir = "-"
+				}
+				policy := a.Policy
+				if policy == "" {
+					policy = a.Category
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\n", localTime(a.TS), a.Action, dir,
+					alertEnd(a.SrcIP, a.SrcName, a.SrcPort), alertEnd(a.DstIP, a.DstName, a.DstPort),
+					trunc(a.Signature, 60), trunc(policy, 30), a.SrcHits)
 			}
 			return w.Flush()
 		}
@@ -447,4 +456,23 @@ func trunc(s string, n int) string {
 		return s
 	}
 	return s[:n-1] + "…"
+}
+
+// alertEnd shows one end of an alert: its address, and the LAN device's name
+// when the router gave one. UniFi's CEF events often name the device but give
+// no address for it.
+func alertEnd(ip, name string, port int) string {
+	switch {
+	case ip != "" && name != "":
+		return joinPort(ip, port) + " (" + name + ")"
+	case ip != "":
+		return joinPort(ip, port)
+	case name != "" && port != 0:
+		return name + ":" + strconv.Itoa(port)
+	case name != "":
+		return name
+	case port != 0:
+		return "?:" + strconv.Itoa(port)
+	}
+	return "-"
 }

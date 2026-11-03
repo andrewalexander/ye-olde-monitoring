@@ -108,6 +108,15 @@ CREATE TABLE IF NOT EXISTS ids_alerts (
 	category     TEXT    NOT NULL DEFAULT '',
 	severity     INTEGER NOT NULL DEFAULT 0,
 	source       TEXT    NOT NULL,
+	-- From UniFi's CEF events: the router's direction, the LAN device at
+	-- either end (CEF often has no address for it) and the policy that fired.
+	-- Added after the table shipped: see store.migrate.
+	direction    TEXT    NOT NULL DEFAULT '',
+	src_name     TEXT    NOT NULL DEFAULT '',
+	src_mac      TEXT    NOT NULL DEFAULT '',
+	dst_name     TEXT    NOT NULL DEFAULT '',
+	dst_mac      TEXT    NOT NULL DEFAULT '',
+	policy       TEXT    NOT NULL DEFAULT '',
 	line_hash    TEXT    NOT NULL UNIQUE
 );
 CREATE INDEX IF NOT EXISTS ids_alerts_ts ON ids_alerts(ts);

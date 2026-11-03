@@ -126,7 +126,11 @@ ADMIN (all GET, all JSON)
 /api/alerts?[ip=][&action=allowed|blocked][&by=signature|src|dst|category|action][&since=][&limit=]
   The router's IDS/IPS alerts, newest first. ip= matches either end.
   [{"id","ts","src_ip","src_port","dst_ip","dst_port","proto","action",
-    "signature","signature_id","category","severity","source","src_hits"}]
+    "signature","signature_id","category","severity","source","src_hits",
+    "direction","src_name","src_mac","dst_name","dst_mac","policy"}]
+  direction, *_name, *_mac, policy: from UniFi's CEF events (empty for
+  Suricata JSON). They name the LAN device, since CEF often has no
+  address for it. by= also takes direction, policy, src_name, dst_name.
   action: allowed (detected only) or blocked (dropped by the router).
   src_hits: requests that source made to our sites over the same period.
   With by=, counts instead: [{"key","count","first"}].

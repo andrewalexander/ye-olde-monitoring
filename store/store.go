@@ -72,6 +72,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -176,10 +180,10 @@ func (s *Store) InsertRecords(recs []ingest.Record) (int, error) {
 			}
 		}
 		if a := r.Alert; a != nil {
-			if err := exec(`INSERT OR IGNORE INTO ids_alerts (ts, src_ip, src_port, dst_ip, dst_port, proto, action,
-				signature, signature_id, category, severity, source, line_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			if err := exec(insertAlert,
 				fmtTime(a.TS), a.SrcIP, a.SrcPort, a.DstIP, a.DstPort, a.Proto, a.Action,
-				a.Signature, a.SignatureID, a.Category, a.Severity, a.Source, a.Hash); err != nil {
+				a.Signature, a.SignatureID, a.Category, a.Severity, a.Source,
+				a.Direction, a.SrcName, a.SrcMAC, a.DstName, a.DstMAC, a.Policy, a.Hash); err != nil {
 				return 0, err
 			}
 		}

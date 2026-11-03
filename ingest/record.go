@@ -66,6 +66,14 @@ type IDSAlert struct {
 	Category    string
 	Severity    int
 	Source      string
+	// From UniFi's CEF events (empty for Suricata's own JSON). They name the
+	// LAN device involved, since CEF often carries no address for it.
+	Direction string // incoming | outgoing | ..., as the router says
+	SrcName   string // LAN device names and MACs, when that end is a client
+	SrcMAC    string
+	DstName   string
+	DstMAC    string
+	Policy    string // the IPS policy that fired, e.g. "DShield Block List"
 }
 
 // Ban is fail2ban banning or unbanning an address.

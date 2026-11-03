@@ -123,6 +123,12 @@ func parseCEF(prefix, body string, now time.Time) (ingest.Record, error) {
 	if a.DstIP == "" {
 		a.DstIP = kv["UNIFIdstClientIp"]
 	}
+	a.Direction = strings.ToLower(kv["UNIFIdirection"])
+	a.Policy = kv["UNIFIpolicyName"]
+	// The dst* names are in every incoming event seen so far; src* is the same
+	// scheme for the other end (an outgoing event's LAN device).
+	a.SrcName, a.SrcMAC = clientName(kv, "src"), strings.ToLower(kv["UNIFIsrcClientMac"])
+	a.DstName, a.DstMAC = clientName(kv, "dst"), strings.ToLower(kv["UNIFIdstClientMac"])
 	a.SrcPort, _ = strconv.Atoi(kv["spt"])
 	a.DstPort, _ = strconv.Atoi(kv["dpt"])
 	a.SignatureID, _ = strconv.ParseInt(kv["UNIFIipsSignatureId"], 10, 64)
@@ -195,4 +201,13 @@ func finish(a *ingest.IDSAlert) (ingest.Record, error) {
 		a.Action = "allowed"
 	}
 	return ingest.Record{Alert: a}, nil
+}
+
+// clientName is a UniFi client's hostname, or its alias in the Network app
+// when it has none.
+func clientName(kv map[string]string, end string) string {
+	if n := kv["UNIFI"+end+"ClientHostname"]; n != "" {
+		return n
+	}
+	return kv["UNIFI"+end+"ClientAlias"]
 }

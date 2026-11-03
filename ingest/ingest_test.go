@@ -302,3 +302,31 @@ func TestBlocklistAnswers(t *testing.T) {
 		}
 	}
 }
+
+// UniFi's CEF events name the LAN device and the direction, and often have
+// no address for the LAN end. The first line is a real one, anonymised; the
+// second is an outgoing event in the same scheme.
+func TestUnifiCEFContext(t *testing.T) {
+	st, recs := run(t, "unifi-cef.log", ids.UniFi{})
+	if st.Records != 2 || st.Bad != 0 {
+		t.Fatalf("stats = %+v", st)
+	}
+	in, out := recs[0].Alert, recs[1].Alert
+	want := ingest.IDSAlert{SrcIP: "203.0.113.30", SrcPort: 52555, DstIP: "", DstPort: 443, Proto: "tcp", Action: "blocked",
+		Signature: "ET DROP Dshield Block Listed Source group 1", SignatureID: 2402000, Severity: 7, Source: "unifi-cef",
+		Direction: "incoming", DstName: "media-server", DstMAC: "02:00:00:00:00:02", Policy: "DShield Block List",
+		TS: time.Date(2026, 11, 3, 15, 3, 25, 230000000, time.UTC)}
+	got := *in
+	got.Hash = ""
+	if !got.TS.Equal(want.TS) {
+		t.Errorf("ts = %v", got.TS)
+	}
+	got.TS = want.TS
+	if got != want {
+		t.Errorf("incoming =\n %+v\nwant\n %+v", got, want)
+	}
+	if out.Direction != "outgoing" || out.SrcName != "Kitchen tablet" || out.SrcMAC != "02:00:00:00:00:03" ||
+		out.DstIP != "198.51.100.80" || out.DstName != "" || out.Action != "allowed" || out.Policy != "Malware" {
+		t.Errorf("outgoing = %+v", *out)
+	}
+}

@@ -20,6 +20,12 @@ type Alert struct {
 	Category    string    `json:"category"`
 	Severity    int       `json:"severity"`
 	Source      string    `json:"source"`
+	Direction   string    `json:"direction,omitempty"` // incoming | outgoing, from the router (CEF)
+	SrcName     string    `json:"src_name,omitempty"`  // LAN device names and MACs (CEF)
+	SrcMAC      string    `json:"src_mac,omitempty"`
+	DstName     string    `json:"dst_name,omitempty"`
+	DstMAC      string    `json:"dst_mac,omitempty"`
+	Policy      string    `json:"policy,omitempty"` // the IPS policy that fired (CEF)
 	SrcHits     int64     `json:"src_hits"`
 }
 
@@ -45,6 +51,7 @@ func (s *Store) Alerts(f AlertFilter) ([]Alert, error) {
 	}
 	rows, err := s.query(`SELECT a.id, a.ts, a.src_ip, a.src_port, a.dst_ip, a.dst_port, a.proto, a.action,
 		a.signature, a.signature_id, a.category, a.severity, a.source,
+		a.direction, a.src_name, a.src_mac, a.dst_name, a.dst_mac, a.policy,
 		(SELECT count(*) FROM hits h WHERE h.client_ip = a.src_ip AND h.ts >= ?)
 		FROM ids_alerts a WHERE `+alertWhere+` ORDER BY a.ts DESC, a.id DESC LIMIT ?`,
 		append(append([]any{fmtTime(f.Since)}, f.args()...), f.Limit)...)
@@ -57,7 +64,8 @@ func (s *Store) Alerts(f AlertFilter) ([]Alert, error) {
 		var a Alert
 		var ts string
 		if err := rows.Scan(&a.ID, &ts, &a.SrcIP, &a.SrcPort, &a.DstIP, &a.DstPort, &a.Proto, &a.Action,
-			&a.Signature, &a.SignatureID, &a.Category, &a.Severity, &a.Source, &a.SrcHits); err != nil {
+			&a.Signature, &a.SignatureID, &a.Category, &a.Severity, &a.Source,
+			&a.Direction, &a.SrcName, &a.SrcMAC, &a.DstName, &a.DstMAC, &a.Policy, &a.SrcHits); err != nil {
 			return nil, err
 		}
 		a.TS = parseTime(ts)
@@ -68,14 +76,16 @@ func (s *Store) Alerts(f AlertFilter) ([]Alert, error) {
 
 var alertColumns = map[string]string{
 	"signature": "signature", "src": "src_ip", "dst": "dst_ip", "category": "category", "action": "action",
+	"direction": "direction", "policy": "policy", "src_name": "src_name", "dst_name": "dst_name",
 }
 
 // TopAlerts counts alerts grouped by one column (signature, src, dst,
-// category or action), most common first.
+// category, action, direction, policy, src_name or dst_name), most common
+// first.
 func (s *Store) TopAlerts(by string, f AlertFilter) ([]KV, error) {
 	col, ok := alertColumns[by]
 	if !ok {
-		return nil, BadQueryError("alerts can be grouped by signature, src, dst, category or action, not " + by)
+		return nil, BadQueryError("alerts can be grouped by signature, src, dst, category, action, direction, policy, src_name or dst_name, not " + by)
 	}
 	if f.Limit <= 0 {
 		f.Limit = 25

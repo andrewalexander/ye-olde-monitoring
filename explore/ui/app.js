@@ -253,11 +253,13 @@ const LIST_VIEWS = {
   },
   alerts: {
     title: "IDS/IPS alerts",
-    lede: "The router's Suricata alerts. allowed = detected only; blocked = dropped by the router.",
+    lede: "The router's IPS alerts. allowed = detected only; blocked = dropped by the router. UniFi's events name the LAN device (and its MAC) but often give no address for it; older rows get those fields from the raw-file backfill.",
     url: "/api/alerts", options: ["action"],
     columns: () => [
-      col("Time", "ts", "time"), col("Action", "action"), col("From", "src_ip", "ip"), col("Port", "src_port", "num"),
-      col("To", "dst_ip", "ip"), col("Port", "dst_port", "num"), col("Proto", "proto"),
+      col("Time", "ts", "time"), col("Action", "action"), col("Direction", "direction"),
+      col("From", "src_ip", "ip"), col("Port", "src_port", "num"), col("From device", "src_name"),
+      col("To", "dst_ip", "ip"), col("Port", "dst_port", "num"), col("To device", "dst_name"), col("Proto", "proto"),
+      col("Policy", "policy"),
       col("Verdict", "verdict", "verdict"), col("Feeds", "feeds", "tags"), col("CC", "country"),
       col("Signature", "signature", "text", { maxWidth: 380 }), col("Category", "category"),
       col("Severity", "severity", "num"), col("Source hits", "src_hits", "num"),
