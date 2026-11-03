@@ -34,6 +34,15 @@ self:
     machine.wait_until_succeeds("dnscount-admin report dns -domain vm.example.org | grep -q 192.168.1.20")
     machine.succeed("test -n \"$(ls /var/lib/dnscount/raw)\"")
 
+    # A UniFi IPS event, as the Network app sends it to a SIEM server.
+    machine.succeed(
+        "echo '<14>Oct 27 15:01:00 router CEF:0|Ubiquiti|UniFi Network|10.0|545|Threat Detected and Blocked|7|"
+        "src=203.0.113.7 spt=51234 dst=192.168.1.10 dpt=443 proto=TCP UNIFIipsSignature=ET SCAN vm test "
+        "UNIFIipsSignatureId=2010937 UNIFIipsClass=Potentially Bad Traffic'"
+        " | nc -u -w1 127.0.0.1 5514"
+    )
+    machine.wait_until_succeeds("dnscount-admin report alerts -action blocked | grep 203.0.113.7 | grep -q 'ET SCAN vm test'")
+
     machine.succeed("systemctl start dnscount-backup.service")
     machine.succeed("ls /var/lib/dnscount/backups | grep -q .")
   '';

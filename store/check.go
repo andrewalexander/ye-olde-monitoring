@@ -22,7 +22,7 @@ func (s *Store) Check(now time.Time) ([]string, error) {
 		{"counters higher than the hits recorded for their site", `SELECT count(*) FROM counters c
 			WHERE c.count > (SELECT count(*) FROM hits h WHERE h.site = c.site)`},
 	}
-	for _, table := range []string{"hits", "dns_queries", "dns_replies", "connections"} {
+	for _, table := range []string{"hits", "dns_queries", "dns_replies", "connections", "ids_alerts", "bans"} {
 		counts = append(counts,
 			struct{ what, q string }{table + " timestamped in the future", `SELECT count(*) FROM ` + table + ` WHERE ts > '` + future + `'`},
 			struct{ what, q string }{table + " timestamped before 2000", `SELECT count(*) FROM ` + table + ` WHERE ts < '` + past + `'`})
@@ -38,6 +38,7 @@ func (s *Store) Check(now time.Time) ([]string, error) {
 	}
 	for _, c := range []struct{ table, col string }{
 		{"hits", "client_ip"}, {"dns_queries", "client_ip"}, {"connections", "client_ip"}, {"connections", "dst_ip"},
+		{"ids_alerts", "src_ip"}, {"ids_alerts", "dst_ip"}, {"bans", "ip"},
 	} {
 		n, err := s.countBadIPs(c.table, c.col)
 		if err != nil {

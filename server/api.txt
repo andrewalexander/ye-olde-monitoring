@@ -123,6 +123,22 @@ ADMIN (all GET, all JSON)
   Lookup counts grouped by domain or by client.
   [{"key": "example.com", "count": 7}]
 
+/api/alerts?[ip=][&action=allowed|blocked][&by=signature|src|dst|category|action][&since=][&limit=]
+  The router's IDS/IPS alerts, newest first. ip= matches either end.
+  [{"id","ts","src_ip","src_port","dst_ip","dst_port","proto","action",
+    "signature","signature_id","category","severity","source","src_hits"}]
+  action: allowed (detected only) or blocked (dropped by the router).
+  src_hits: requests that source made to our sites over the same period.
+  With by=, counts instead: [{"key","count","first"}].
+
+/api/bans?[ip=][&jail=][&since=][&limit=]
+  fail2ban bans, newest first, each paired with the unban that ended it.
+  [{"id","banned_at","unbanned_at","jail","ip","ports","bantime_ns","failures",
+    "hits_24h_before","hits_during"}]
+  hits_during: requests from that IP that reached a site on a port the ban
+  covers while it was in force (after a 5s grace for requests already in
+  flight). Anything above 0 means the block leaked.
+
 /api/trips?[ip=][&breaker=counter|ingest|syslog|syslog-not-allowed][&since=][&limit=]
   Circuit-breaker trips, newest first (without the detail blob).
   [{"id","tripped_at","cooldown_until","ended_at","breaker","key","reason",
@@ -152,6 +168,8 @@ Same data from the command line
   dnscount report hits -bottom path -ip 203.0.113.9
   dnscount report dns -new domain
   dnscount report dns -domain example.com
+  dnscount report alerts -top signature
+  dnscount report bans
   dnscount report trips
   dnscount report trip <id>
   dnscount check

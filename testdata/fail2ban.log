@@ -1,0 +1,16 @@
+2026-10-27T10:26:33-05:00 server systemd[1]: Started Fail2Ban Service.
+2026-10-27T10:26:33-05:00 server fail2ban.filtersystemd[67503]: INFO [jellyfin] Jail is in operation now (process new journal entries)
+2026-10-27T20:22:47-05:00 server fail2ban.filter[67503]: INFO [jellyfin] Found 203.0.113.9 - 2026-10-27 20:22:47
+2026-10-27T20:22:50-05:00 server fail2ban.filter[67503]: INFO [jellyfin] Found 203.0.113.9 - 2026-10-27 20:22:50
+2026-10-27T20:22:52-05:00 server fail2ban.filter[67503]: INFO [jellyfin] Found 203.0.113.9 - 2026-10-27 20:22:52
+2026-10-27T20:22:58-05:00 server fail2ban.actions[67503]: NOTICE [jellyfin] Ban 203.0.113.9
+2026-10-27T21:09:38-05:00 server fail2ban.filter[67503]: INFO [jellyfin] Ignore 192.168.1.230 by ip
+2026-10-27T21:22:58-05:00 server fail2ban.actions[67503]: NOTICE [jellyfin] Unban 203.0.113.9
+2026-10-27T21:30:00-05:00 server fail2ban.filter[67503]: INFO [caddy-probe] Found 198.51.100.4 - 2026-10-27 21:30:00
+2026-10-27T21:30:01-05:00 server fail2ban.filter[67503]: INFO [caddy-probe] Found 198.51.100.4 - 2026-10-27 21:30:01
+2026-10-27T21:30:01-05:00 server fail2ban.actions[67503]: NOTICE [caddy-probe] Increase Ban 198.51.100.4 (2 # 2 days, 0:00:00 -> 2026-10-29 21:30:01)
+2026-10-27T21:30:01-05:00 server fail2ban.actions[67503]: NOTICE [caddy-probe] Ban 198.51.100.4
+2026-10-27T22:00:00-05:00 server fail2ban.actions[67503]: NOTICE [caddy-probe] Unban 198.51.100.4
+2026-10-27T22:00:05-05:00 server fail2ban.actions[68000]: NOTICE [caddy-probe] Restore Ban 198.51.100.4
+2026-10-27T22:10:00-05:00 server fail2ban.actions[68000]: NOTICE [sshd] Ban 2001:db8::7
+2026-10-27T22:11:00-05:00 server fail2ban.actions[68000]: NOTICE [sshd] Ban not-an-ip

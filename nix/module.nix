@@ -42,6 +42,11 @@ let
   noNetwork = { PrivateNetwork = true; RestrictAddressFamilies = [ "AF_UNIX" ]; };
 
   isV6 = a: lib.hasInfix ":" a;
+
+  # Each jail's port setting, so a ban only counts requests on ports it
+  # actually blocks. Jails without one cover every port.
+  jailPorts = concatStringsSep ";" (lib.mapAttrsToList (name: j: "${name}=${toString j.settings.port}")
+    (lib.filterAttrs (_: j: builtins.isAttrs j && (j.settings or { }) ? port) config.services.fail2ban.jails));
   syslogListen = "udp://${cfg.syslog.address}:${toString cfg.syslog.port}";
 in
 {
@@ -137,6 +142,19 @@ in
       };
     };
 
+    fail2ban = {
+      enable = mkOption {
+        type = types.bool;
+        default = config.services.fail2ban.enable;
+        defaultText = lib.literalExpression "config.services.fail2ban.enable";
+        description = ''
+          Record fail2ban's bans and unbans, read from its journal, so
+          `dnscount report bans` can check that each ban held. fail2ban itself
+          is left alone: dnscount reads its log as the dnscount user.
+        '';
+      };
+    };
+
     backup = {
       enable = mkOption {
         type = types.bool;
@@ -221,6 +239,26 @@ in
         # Binding a LAN IP fails until DHCP has given it; just retry.
         Restart = "always";
         RestartSec = 2;
+      };
+    };
+
+    systemd.services.dnscount-fail2ban = mkIf cfg.fail2ban.enable {
+      description = "dnscount: record fail2ban's bans and unbans from its journal";
+      after = [ "dnscount-serve.service" "fail2ban.service" ];
+      wantedBy = [ "multi-user.target" ];
+      environment.DNSCOUNT_DB = db;
+      # The whole journal is read again on every start; already-recorded
+      # lines are skipped, so nothing is lost or doubled across restarts.
+      serviceConfig = hardening // noNetwork // {
+        ExecStart = pkgs.writeShellScript "dnscount-fail2ban" ''
+          set -o pipefail
+          ${config.systemd.package}/bin/journalctl --unit=fail2ban.service --output=short-iso \
+            --no-pager --follow --lines=all \
+            | ${bin} ingest-bans -follow -jail-ports ${lib.escapeShellArg jailPorts} -
+        '';
+        SupplementaryGroups = [ "systemd-journal" ];
+        Restart = "always";
+        RestartSec = 5;
       };
     };
 

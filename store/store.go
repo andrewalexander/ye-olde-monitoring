@@ -148,6 +148,19 @@ func (s *Store) InsertRecords(recs []ingest.Record) (int, error) {
 				return 0, err
 			}
 		}
+		if a := r.Alert; a != nil {
+			if err := exec(`INSERT OR IGNORE INTO ids_alerts (ts, src_ip, src_port, dst_ip, dst_port, proto, action,
+				signature, signature_id, category, severity, source, line_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				fmtTime(a.TS), a.SrcIP, a.SrcPort, a.DstIP, a.DstPort, a.Proto, a.Action,
+				a.Signature, a.SignatureID, a.Category, a.Severity, a.Source, a.Hash); err != nil {
+				return 0, err
+			}
+		}
+		if b := r.Ban; b != nil {
+			if err := exec(insertBan, banArgs(b)...); err != nil {
+				return 0, err
+			}
+		}
 	}
 	return n, tx.Commit()
 }

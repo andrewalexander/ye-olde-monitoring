@@ -90,3 +90,42 @@ CREATE TABLE IF NOT EXISTS breaker_trips (
 );
 CREATE INDEX IF NOT EXISTS breaker_trips_key ON breaker_trips(key);
 CREATE INDEX IF NOT EXISTS breaker_trips_tripped_at ON breaker_trips(tripped_at);
+
+-- One row per IDS/IPS alert from the router: which signature matched traffic
+-- between which addresses, and whether the router let it through (allowed)
+-- or dropped it (blocked).
+CREATE TABLE IF NOT EXISTS ids_alerts (
+	id           INTEGER PRIMARY KEY,
+	ts           TEXT    NOT NULL,
+	src_ip       TEXT    NOT NULL,
+	src_port     INTEGER NOT NULL DEFAULT 0,
+	dst_ip       TEXT    NOT NULL DEFAULT '',
+	dst_port     INTEGER NOT NULL DEFAULT 0,
+	proto        TEXT    NOT NULL DEFAULT '',
+	action       TEXT    NOT NULL,
+	signature    TEXT    NOT NULL DEFAULT '',
+	signature_id INTEGER NOT NULL DEFAULT 0,
+	category     TEXT    NOT NULL DEFAULT '',
+	severity     INTEGER NOT NULL DEFAULT 0,
+	source       TEXT    NOT NULL,
+	line_hash    TEXT    NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS ids_alerts_ts ON ids_alerts(ts);
+CREATE INDEX IF NOT EXISTS ids_alerts_src_ip ON ids_alerts(src_ip);
+
+-- fail2ban's bans and unbans, one row per event, read from its log
+-- (dnscount ingest-bans). Pairing a ban with its unban gives the
+-- window in which that IP should have got nothing through.
+CREATE TABLE IF NOT EXISTS bans (
+	id        INTEGER PRIMARY KEY,
+	ts        TEXT    NOT NULL,
+	event     TEXT    NOT NULL, -- ban | unban
+	jail      TEXT    NOT NULL,
+	ip        TEXT    NOT NULL,
+	ports     TEXT    NOT NULL DEFAULT '', -- the jail's port setting; '' is all
+	bantime_s INTEGER NOT NULL DEFAULT 0,
+	failures  INTEGER NOT NULL DEFAULT 0,
+	line_hash TEXT    NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS bans_ip ON bans(ip, jail, ts);
+CREATE INDEX IF NOT EXISTS bans_ts ON bans(ts);

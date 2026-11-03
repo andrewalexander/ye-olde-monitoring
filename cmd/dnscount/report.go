@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -17,6 +18,8 @@ import (
 const reportUsage = `usage:
   dnscount report hits  [-top|-bottom|-new ip|path|ua|site|host|status|method|referer[,...]] [-site s] [-ip x] [-status 404|4xx] [-since 24h] [-limit n]
   dnscount report dns   -domain example.com | -client 192.168.1.5 | -top|-bottom|-new domain|client[,...]  [-since 7d]
+  dnscount report alerts [-top signature|src|dst|category|action] [-ip x] [-action allowed|blocked] [-since 24h]
+  dnscount report bans  [-ip x] [-jail name] [-since 7d]
   dnscount report trips [-since 24h] [-ip x] [-breaker name]
   dnscount report trip  <id>
 `
@@ -137,6 +140,64 @@ func report(args []string) error {
 				return printKVs(q.By, kvs)
 			}
 			return fmt.Errorf("report dns needs -domain, -client, -top, -bottom or -new")
+		}
+	case "alerts":
+		top := fs.String("top", "", "count alerts by signature, src, dst, category or action instead of listing them")
+		ip := fs.String("ip", "", "only alerts from or to this IP")
+		action := fs.String("action", "", "only allowed or blocked alerts")
+		run = func(st *store.Store, since time.Time) error {
+			f := store.AlertFilter{Since: since, IP: *ip, Action: *action, Limit: *limit}
+			if *top != "" {
+				kvs, err := st.TopAlerts(*top, f)
+				if err != nil {
+					return err
+				}
+				return printKVs(*top, kvs)
+			}
+			alerts, err := st.Alerts(f)
+			if err != nil {
+				return err
+			}
+			w := table()
+			fmt.Fprintln(w, "TIME\tACTION\tFROM\tTO\tSIGNATURE\tCATEGORY\tSRC HITS")
+			for _, a := range alerts {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\n", localTime(a.TS), a.Action,
+					joinPort(a.SrcIP, a.SrcPort), joinPort(a.DstIP, a.DstPort), trunc(a.Signature, 60), a.Category, a.SrcHits)
+			}
+			return w.Flush()
+		}
+	case "bans":
+		ip := fs.String("ip", "", "only bans of this IP")
+		jail := fs.String("jail", "", "only this fail2ban jail")
+		run = func(st *store.Store, since time.Time) error {
+			bans, err := st.Bans(store.BanFilter{Since: since, IP: *ip, Jail: *jail, Limit: *limit}, time.Now())
+			if err != nil {
+				return err
+			}
+			w := table()
+			fmt.Fprintln(w, "BANNED\tJAIL\tIP\tFAILURES\tFOR\tUNBANNED\tHITS 24H BEFORE\tHITS DURING")
+			leaks := 0
+			for _, b := range bans {
+				unbanned := "still banned"
+				if !b.UnbannedAt.IsZero() {
+					unbanned = localTime(b.UnbannedAt)
+				}
+				during := strconv.FormatInt(b.HitsDuring, 10)
+				if b.HitsDuring > 0 {
+					during += "  LEAK"
+					leaks++
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%d\t%s\n", localTime(b.BannedAt), b.Jail, b.IP, b.Failures,
+					banLength(b.BanTime), unbanned, b.HitsBefore, during)
+			}
+			if err := w.Flush(); err != nil {
+				return err
+			}
+			if leaks > 0 {
+				fmt.Printf("%d ban(s) leaked: requests reached a site on a banned port while the ban was in force.\n"+
+					"see them with: dnscount report hits -ip <ip>\n", leaks)
+			}
+			return nil
 		}
 	case "trips":
 		ip := fs.String("ip", "", "only trips by this key/IP")
@@ -301,6 +362,28 @@ func printTripCount(st *store.Store, ip string) error {
 	}
 	fmt.Println()
 	return nil
+}
+
+func joinPort(ip string, port int) string {
+	if ip == "" {
+		return "-"
+	}
+	if port == 0 {
+		return ip
+	}
+	return net.JoinHostPort(ip, strconv.Itoa(port))
+}
+
+func banLength(d time.Duration) string {
+	switch {
+	case d < 0:
+		return "forever"
+	case d == 0:
+		return "-"
+	case d%(24*time.Hour) == 0:
+		return fmt.Sprintf("%dd", d/(24*time.Hour))
+	}
+	return d.String()
 }
 
 func localTime(t time.Time) string {

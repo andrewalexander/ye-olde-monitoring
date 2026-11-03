@@ -384,7 +384,7 @@ func TestAPIDoc(t *testing.T) {
 		for _, route := range []string{
 			"/counter.svg", "/counter.txt", "/counter.js", "POST /ingest",
 			"/api/hits", "/api/top", "/api/dns?domain", "/api/dns?client", "/api/dns/top",
-			"/api/trips?", "/api/trips/{id}", "/api/health",
+			"/api/alerts?", "/api/bans?", "/api/trips?", "/api/trips/{id}", "/api/health",
 		} {
 			if !strings.Contains(w.Body.String(), route) {
 				t.Errorf("%s doesn't document %s", url, route)

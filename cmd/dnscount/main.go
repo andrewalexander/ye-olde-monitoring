@@ -4,7 +4,8 @@
 //	dnscount syslog         receive UniFi remote syslog (DNS lookups, firewall logs)
 //	dnscount ingest-access  import nginx/apache/caddy access logs
 //	dnscount ingest-dns     import dnsmasq/UniFi/Pi-hole or AdGuard logs
-//	dnscount report         hits | dns | trips | trip <id>
+//	dnscount ingest-bans    import fail2ban's log (bans and unbans)
+//	dnscount report         hits | dns | alerts | bans | trips | trip <id>
 //	dnscount check          data sanity checks
 //	dnscount backup         timestamped copy of the database
 package main
@@ -28,7 +29,9 @@ import (
 	"dnscount/hit"
 	"dnscount/ingest"
 	"dnscount/ingest/dns"
+	"dnscount/ingest/f2b"
 	"dnscount/ingest/fw"
+	"dnscount/ingest/ids"
 	"dnscount/ingest/syslog"
 	"dnscount/server"
 	"dnscount/store"
@@ -40,8 +43,9 @@ commands:
   serve          public counter + /ingest collector + localhost admin API
   syslog         receive UniFi remote syslog (DNS lookups, firewall logs)
   ingest-access  import nginx/apache "combined" or caddy JSON access logs
-  ingest-dns     import dnsmasq (UniFi, Pi-hole), unifi (dnsmasq+firewall) or adguard logs
-  report         hits | dns | trips | trip <id>
+  ingest-dns     import dnsmasq (UniFi, Pi-hole), unifi (dnsmasq+firewall+IDS) or adguard logs
+  ingest-bans    import fail2ban's log (journalctl -u fail2ban) to check bans held
+  report         hits | dns | alerts | bans | trips | trip <id>
   check          run data sanity checks
   backup         write a timestamped copy of the database to a directory
 
@@ -56,7 +60,7 @@ func main() {
 	}
 	cmds := map[string]func([]string) error{
 		"serve": serve, "syslog": syslogCmd, "ingest-access": ingestAccess,
-		"ingest-dns": ingestDNS, "report": report, "check": check, "backup": backup,
+		"ingest-dns": ingestDNS, "ingest-bans": ingestBans, "report": report, "check": check, "backup": backup,
 	}
 	f, ok := cmds[os.Args[1]]
 	if !ok {
@@ -225,7 +229,7 @@ func ingestAccess(args []string) error {
 func ingestDNS(args []string) error {
 	fs := flag.NewFlagSet("ingest-dns", flag.ExitOnError)
 	db := dbFlag(fs)
-	format := fs.String("format", "dnsmasq", "dnsmasq (UniFi, Pi-hole) | unifi (dnsmasq + firewall lines, e.g. syslog -raw files) | adguard")
+	format := fs.String("format", "dnsmasq", "dnsmasq (UniFi, Pi-hole) | unifi (dnsmasq, firewall and IDS/IPS lines, e.g. syslog -raw files or the router's threat.log) | adguard")
 	follow := fs.Bool("follow", false, "keep reading as the file grows (like tail -f)")
 	fs.Parse(args)
 	var p ingest.LineParser
@@ -233,13 +237,26 @@ func ingestDNS(args []string) error {
 	case "dnsmasq", "pihole":
 		p = dns.Dnsmasq{}
 	case "unifi":
-		p = ingest.Multi{dns.Dnsmasq{}, fw.IPTables{}}
+		p = ingest.Multi{dns.Dnsmasq{}, fw.IPTables{}, ids.UniFi{}}
 	case "adguard":
 		p = dns.AdGuard{}
 	default:
 		return fmt.Errorf("unknown -format %q", *format)
 	}
 	return runIngest(*db, p, fs.Args(), *follow, nil)
+}
+
+func ingestBans(args []string) error {
+	fs := flag.NewFlagSet("ingest-bans", flag.ExitOnError)
+	db := dbFlag(fs)
+	ports := fs.String("jail-ports", "", `each jail's port setting, "sshd=ssh;jellyfin=80,443,8096"; jails not listed cover all ports`)
+	follow := fs.Bool("follow", false, "keep reading as the input grows, writing each ban as it comes (use with journalctl -f)")
+	fs.Parse(args)
+	m, err := f2b.ParsePorts(*ports)
+	if err != nil {
+		return fmt.Errorf("-jail-ports: %w", err)
+	}
+	return runIngest(*db, &f2b.Fail2ban{Ports: m}, fs.Args(), *follow, nil)
 }
 
 // runIngest feeds each file ("-" is stdin) through p into the store in

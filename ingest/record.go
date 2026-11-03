@@ -49,12 +49,45 @@ type Conn struct {
 	Source   string
 }
 
+// IDSAlert is one intrusion detection/prevention event: a signature matched
+// traffic between two addresses, and the router either let it through
+// ("allowed") or dropped it ("blocked").
+type IDSAlert struct {
+	Hash        string
+	TS          time.Time
+	SrcIP       string
+	SrcPort     int
+	DstIP       string
+	DstPort     int
+	Proto       string
+	Action      string // allowed | blocked
+	Signature   string
+	SignatureID int64
+	Category    string
+	Severity    int
+	Source      string
+}
+
+// Ban is fail2ban banning or unbanning an address.
+type Ban struct {
+	Hash     string
+	TS       time.Time
+	Event    string // ban | unban
+	Jail     string
+	IP       string
+	Ports    string // the jail's port setting ("80,443", "ssh"); empty means all
+	BanTime  time.Duration
+	Failures int
+}
+
 // Record is whatever one log line produced; any field may be nil.
 type Record struct {
 	Hit   *hit.Hit
 	Query *DNSQuery
 	Reply *DNSReply
 	Conn  *Conn
+	Alert *IDSAlert
+	Ban   *Ban
 }
 
 // ErrSkip means the line is fine but isn't something this parser records
@@ -67,6 +100,11 @@ var ErrSkip = errors.New("skip")
 type LineParser interface {
 	ParseLine(line string, now time.Time) (Record, error)
 }
+
+// Unguarded is implemented by parsers whose input is mostly lines they skip
+// on purpose (fail2ban's log is mostly "Found"), so the wrong-format guard
+// would misfire.
+type Unguarded interface{ Unguarded() }
 
 // Stats summarizes a run over a log.
 type Stats struct {
@@ -87,6 +125,7 @@ const MaxLine = 64 * 1024
 func Run(r io.Reader, p LineParser, now time.Time, emit func(Record) error) (Stats, error) {
 	var st Stats
 	dd := NewDeduper()
+	_, unguarded := p.(Unguarded)
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), MaxLine)
 	for sc.Scan() {
@@ -104,7 +143,7 @@ func Run(r io.Reader, p LineParser, now time.Time, emit func(Record) error) (Sta
 				return st, err
 			}
 		}
-		if st.Lines == GuardLines && float64(st.Bad+st.Skipped) > GuardBadRatio*float64(st.Lines) {
+		if !unguarded && st.Lines == GuardLines && float64(st.Bad+st.Skipped) > GuardBadRatio*float64(st.Lines) {
 			return st, fmt.Errorf("%d of the first %d lines were unusable; wrong -format?", st.Bad+st.Skipped, st.Lines)
 		}
 	}
@@ -160,6 +199,12 @@ func (r *Record) SetHash(h string) {
 	}
 	if r.Conn != nil {
 		r.Conn.Hash = h
+	}
+	if r.Alert != nil {
+		r.Alert.Hash = h
+	}
+	if r.Ban != nil {
+		r.Ban.Hash = h
 	}
 }
 

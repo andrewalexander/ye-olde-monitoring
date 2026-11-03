@@ -9,6 +9,7 @@ import (
 	"dnscount/ingest"
 	"dnscount/ingest/dns"
 	"dnscount/ingest/fw"
+	"dnscount/ingest/ids"
 )
 
 var now = time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)
@@ -100,6 +101,46 @@ func TestUnifiSyslogFixture(t *testing.T) {
 	c = recs[3].Conn
 	if c == nil || c.ClientIP != "198.51.100.7" || c.DstPort != 22 || c.Action != "drop" || c.Rule != "WAN_LOCAL-D-2147483647" {
 		t.Errorf("drop conn (with uptime prefix) = %+v", c)
+	}
+}
+
+// Both shapes of UniFi IDS/IPS alert: Suricata's JSON from the router's
+// threat.log, and the CEF security events sent to a SIEM server.
+func TestUnifiIDSFixture(t *testing.T) {
+	st, recs := run(t, "unifi-ids.log", ids.UniFi{})
+	// Skipped: the "Test Syslog" button and an admin login. Bad: a threat with no source.
+	if want := (ingest.Stats{Lines: 8, Records: 5, Skipped: 2, Bad: 1}); st != want {
+		t.Errorf("stats = %+v, want %+v", st, want)
+	}
+	if len(recs) != 5 {
+		t.Fatalf("got %d records", len(recs))
+	}
+	est := time.FixedZone("", -5*3600)
+	want := []ingest.IDSAlert{
+		{TS: time.Date(2026, 11, 1, 23, 24, 21, 139078000, est), SrcIP: "192.168.1.10", SrcPort: 58249, DstIP: "198.51.100.20", DstPort: 56385,
+			Proto: "udp", Action: "allowed", Signature: "ET P2P BitTorrent DHT ping request", SignatureID: 2008581,
+			Category: "Potential Corporate Privacy Violation", Severity: 1, Source: "unifi-ids"},
+		{TS: time.Date(2026, 11, 2, 21, 31, 20, 22895000, est), SrcIP: "203.0.113.5", SrcPort: 38072, DstIP: "192.168.1.10", DstPort: 443,
+			Proto: "tcp", Action: "allowed", Signature: "ET DROP Dshield Block Listed Source group 1", SignatureID: 2402000,
+			Category: "Misc Attack", Severity: 2, Source: "unifi-ids"},
+		{SrcIP: "203.0.113.6", Action: "blocked", SignatureID: 2402000, Source: "unifi-ids"},
+		{TS: time.Date(2026, 10, 27, 22, 11, 0, 0, time.UTC), SrcIP: "203.0.113.7", SrcPort: 51234, DstIP: "192.168.1.10", DstPort: 443,
+			Proto: "tcp", Action: "blocked", Signature: "ET SCAN Suspicious inbound to mySQL port 3306", SignatureID: 2010937,
+			Category: "Potentially Bad Traffic", Severity: 7, Source: "unifi-cef"},
+		{SrcIP: "2001:db8::5", Action: "allowed", Signature: "ET INFO Suspicious UA", Category: "Misc activity", Source: "unifi-cef"},
+	}
+	for i, w := range want {
+		a := recs[i].Alert
+		if a == nil {
+			t.Fatalf("record %d has no alert", i)
+		}
+		if a.SrcIP != w.SrcIP || a.Action != w.Action || a.Source != w.Source ||
+			(w.Signature != "" && a.Signature != w.Signature) || (w.SignatureID != 0 && a.SignatureID != w.SignatureID) ||
+			(w.Category != "" && a.Category != w.Category) || (w.DstPort != 0 && (a.DstIP != w.DstIP || a.DstPort != w.DstPort ||
+			a.SrcPort != w.SrcPort || a.Proto != w.Proto || a.Severity != w.Severity)) ||
+			(!w.TS.IsZero() && !a.TS.Equal(w.TS)) {
+			t.Errorf("alert %d =\n %+v\nwant\n %+v", i, *a, w)
+		}
 	}
 }
 

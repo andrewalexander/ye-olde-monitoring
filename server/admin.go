@@ -49,6 +49,16 @@ func (s *Server) Admin(extraHealth func() map[string]any) http.Handler {
 	mux.HandleFunc("GET /api/dns/top", s.api(func(r *http.Request, p *params) (any, error) {
 		return st.DNSTop(p.group("domain"))
 	}))
+	mux.HandleFunc("GET /api/alerts", s.api(func(r *http.Request, p *params) (any, error) {
+		f := store.AlertFilter{Since: p.since(), IP: p.str("ip"), Action: p.str("action"), Limit: p.int("limit")}
+		if by := p.str("by"); by != "" {
+			return st.TopAlerts(by, f)
+		}
+		return st.Alerts(f)
+	}))
+	mux.HandleFunc("GET /api/bans", s.api(func(r *http.Request, p *params) (any, error) {
+		return st.Bans(store.BanFilter{Since: p.since(), IP: p.str("ip"), Jail: p.str("jail"), Limit: p.int("limit")}, s.cfg.Now())
+	}))
 	mux.HandleFunc("GET /api/trips", s.api(func(r *http.Request, p *params) (any, error) {
 		return st.Trips(store.TripFilter{Since: p.since(), Key: p.str("ip"), Breaker: p.str("breaker"), Limit: p.int("limit")})
 	}))
