@@ -77,8 +77,6 @@ func (f Feed) File(dir string) string {
 var Builtin = []Feed{
 	{Name: "feodo", URL: "https://feodotracker.abuse.ch/downloads/ipblocklist.txt", Kind: "ip", Format: "plain",
 		Verdict: Malicious, Interval: time.Hour, About: "abuse.ch Feodo Tracker: botnet C2 servers"},
-	{Name: "sslbl", URL: "https://sslbl.abuse.ch/blacklist/sslipblacklist.txt", Kind: "ip", Format: "plain",
-		Verdict: Malicious, Interval: time.Hour, About: "abuse.ch SSLBL: botnet C2 servers, by TLS certificate"},
 	{Name: "spamhaus-drop", URL: "https://www.spamhaus.org/drop/drop_v4.json", Kind: "ip", Format: "spamhaus",
 		Verdict: Malicious, Interval: 12 * time.Hour, About: "Spamhaus DROP: hijacked and criminal netblocks (IPv4)"},
 	{Name: "spamhaus-drop6", URL: "https://www.spamhaus.org/drop/drop_v6.json", Kind: "ip", Format: "spamhaus",

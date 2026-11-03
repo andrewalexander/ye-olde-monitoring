@@ -20,8 +20,9 @@ const (
 	RoleAnswer               // an address a lookup resolved to
 	RoleConn                 // destination of a logged connection
 	RoleAlertDst             // destination of an IDS alert
+	RoleConnSrc              // source of a logged connection from outside (port forwards, WAN drops)
 
-	RolesIn  = RoleHit | RoleBan | RoleAlertSrc | RoleTrip
+	RolesIn  = RoleHit | RoleBan | RoleAlertSrc | RoleTrip | RoleConnSrc
 	RolesOut = RoleLookup | RoleAnswer | RoleConn | RoleAlertDst
 
 	roleLAN = -1 // a dns_queries client: a LAN device
@@ -39,7 +40,7 @@ var indexSources = []indexSource{
 	{"breaker_trips", "tripped_at, key", []int{RoleTrip}},
 	{"dns_queries", "ts, client_ip, domain", []int{roleLAN, RoleLookup}},
 	{"dns_replies", "ts, answer", []int{RoleAnswer}},
-	{"connections", "ts, dst_ip", []int{RoleConn}},
+	{"connections", "ts, client_ip, dst_ip", []int{RoleConnSrc, RoleConn}},
 }
 
 type seenAgg struct {

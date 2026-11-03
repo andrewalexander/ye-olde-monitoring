@@ -371,3 +371,13 @@ func (s *Store) IPHistory(ip string) (IPHistory, error) {
 	err := s.queryRow(`SELECT count(*) FROM breaker_trips WHERE key = ?`, ip).Scan(&h.Trips)
 	return h, err
 }
+
+// Newest is the time of the newest DNS lookup and the newest hit, zero if
+// there are none. Both use the ts indexes.
+func (s *Store) Newest() (dns, hits time.Time, err error) {
+	var d, h sql.NullString
+	if err = s.queryRow(`SELECT (SELECT max(ts) FROM dns_queries), (SELECT max(ts) FROM hits)`).Scan(&d, &h); err != nil {
+		return
+	}
+	return parseTime(d.String), parseTime(h.String), nil
+}

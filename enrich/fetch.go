@@ -22,7 +22,7 @@ const MaxFeedSize = 128 << 20
 type FeedState struct {
 	ETag         string    `json:"etag,omitempty"`
 	LastModified string    `json:"last_modified,omitempty"`
-	LastOK       time.Time `json:"last_ok,omitzero"`      // last 200 or 304
+	LastOK       time.Time `json:"last_ok,omitzero"`     // last 200 or 304
 	LastChange   time.Time `json:"last_change,omitzero"` // last new file saved
 	LastTry      time.Time `json:"last_try,omitzero"`
 	LastError    string    `json:"last_error,omitempty"`

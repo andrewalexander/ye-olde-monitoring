@@ -5,9 +5,12 @@
 //	dnscount ingest-access  import nginx/apache/caddy access logs
 //	dnscount ingest-dns     import dnsmasq/UniFi/Pi-hole or AdGuard logs
 //	dnscount ingest-bans    import fail2ban's log (bans and unbans)
-//	dnscount report         hits | dns | alerts | bans | trips | trip <id>
+//	dnscount report         hits | dns | alerts | bans | flagged | trips | trip <id>
 //	dnscount check          data sanity checks
 //	dnscount backup         timestamped copy of the database
+//	dnscount explore        LAN table explorer over a read-only view, with feed matches
+//	dnscount feeds          download the threat feeds
+//	dnscount enrich         match indicators against the feeds once
 package main
 
 import (
@@ -45,9 +48,12 @@ commands:
   ingest-access  import nginx/apache "combined" or caddy JSON access logs
   ingest-dns     import dnsmasq (UniFi, Pi-hole), unifi (dnsmasq+firewall+IDS) or adguard logs
   ingest-bans    import fail2ban's log (journalctl -u fail2ban) to check bans held
-  report         hits | dns | alerts | bans | trips | trip <id>
+  report         hits | dns | alerts | bans | flagged | trips | trip <id>
   check          run data sanity checks
   backup         write a timestamped copy of the database to a directory
+  explore        LAN table explorer: a separate, read-only process (see docs/homelab.md)
+  feeds          update | list: download the free threat feeds and IP-to-ASN table
+  enrich         one pass of matching indicators against the feeds (the explorer does this itself)
 
 run "dnscount <command> -h" for flags. The database defaults to $DNSCOUNT_DB or ./dnscount.db.
 `
@@ -61,6 +67,7 @@ func main() {
 	cmds := map[string]func([]string) error{
 		"serve": serve, "syslog": syslogCmd, "ingest-access": ingestAccess,
 		"ingest-dns": ingestDNS, "ingest-bans": ingestBans, "report": report, "check": check, "backup": backup,
+		"explore": exploreCmd, "enrich": enrichCmd, "feeds": feedsCmd,
 	}
 	f, ok := cmds[os.Args[1]]
 	if !ok {

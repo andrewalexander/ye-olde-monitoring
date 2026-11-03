@@ -201,7 +201,7 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "store error", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]int{"accepted": n, "duplicates": len(batch.Hits) - n})
+	WriteJSON(w, map[string]int{"accepted": n, "duplicates": len(batch.Hits) - n})
 }
 
 func checkToken(r *http.Request, want string) bool {
@@ -284,7 +284,7 @@ func Fingerprint(v string) string {
 	return fmt.Sprintf("sha256:%s len=%d", hex.EncodeToString(h[:8]), len(v))
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
+func WriteJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

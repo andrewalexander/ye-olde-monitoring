@@ -20,6 +20,7 @@ const reportUsage = `usage:
   dnscount report dns   -domain example.com | -client 192.168.1.5 | -top|-bottom|-new domain|client[,...]  [-since 7d]
   dnscount report alerts [-top signature|src|dst|category|action] [-ip x] [-action allowed|blocked] [-since 24h]
   dnscount report bans  [-ip x] [-jail name] [-since 7d]
+  dnscount report flagged [-since 30d] [-verdict malicious,suspicious|all] [-enrich-db explore.db]
   dnscount report trips [-since 24h] [-ip x] [-breaker name]
   dnscount report trip  <id>
 `
@@ -36,6 +37,8 @@ func report(args []string) error {
 	var run func(st *store.Store, since time.Time) error
 	// Filled in by the grouped reports, since these flags are only theirs.
 	var grouped func() (store.GroupQuery, error)
+	// Set by reports that read the explorer's database too.
+	var open func() (*store.Store, error)
 
 	switch args[0] {
 	case "hits":
@@ -199,6 +202,49 @@ func report(args []string) error {
 			}
 			return nil
 		}
+	case "flagged":
+		enrichDB := fs.String("enrich-db", "", "the explorer's database (default: explore.db next to -db)")
+		verdict := fs.String("verdict", "", "malicious,suspicious (the default), or all")
+		open = func() (*store.Store, error) {
+			return store.OpenReadOnly(*db, defaultEnrichDB(*db, *enrichDB), 2)
+		}
+		run = func(st *store.Store, since time.Time) error {
+			if since.IsZero() {
+				since = time.Now().AddDate(0, 0, -30)
+			}
+			q := store.FlaggedQuery{Since: since, Limit: *limit}
+			switch *verdict {
+			case "":
+			case "all":
+				q.Verdicts = []string{"malicious", "suspicious", "info"}
+			default:
+				q.Verdicts = strings.Split(*verdict, ",")
+			}
+			rows, err := st.Flagged(q)
+			if err != nil {
+				return err
+			}
+			w := table()
+			fmt.Fprintln(w, "LAST SEEN\tINDICATOR\tDIR\tVERDICT\tFEEDS\tASN\tHITS\tALERTS\tBANS\tLAN CLIENTS\tVIA")
+			for _, r := range rows {
+				var verdict, asn string
+				var feeds []string
+				if r.Intel != nil {
+					verdict, feeds = r.Verdict, r.Feeds
+					if r.ASN != 0 {
+						asn = fmt.Sprintf("AS%d %s %s", r.ASN, r.Country, trunc(r.Owner, 24))
+					}
+				}
+				var clients []string
+				for _, c := range r.Clients {
+					clients = append(clients, fmt.Sprintf("%s(%d)", c.IP, c.Count))
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n", localTime(r.Last), r.Indicator, r.Direction,
+					verdict, strings.Join(feeds, ","), asn, r.Hits, r.Alerts, r.Bans, trunc(strings.Join(clients, " "), 50),
+					trunc(strings.Join(r.Via, ","), 40))
+			}
+			return w.Flush()
+		}
 	case "trips":
 		ip := fs.String("ip", "", "only trips by this key/IP")
 		brk := fs.String("breaker", "", "only this breaker (counter|ingest|syslog|syslog-not-allowed)")
@@ -267,7 +313,10 @@ func report(args []string) error {
 			*since = "24h"
 		}
 	}
-	st, err := store.Open(*db)
+	if open == nil {
+		open = func() (*store.Store, error) { return store.Open(*db) }
+	}
+	st, err := open()
 	if err != nil {
 		return err
 	}

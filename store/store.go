@@ -202,3 +202,9 @@ func (s *Store) Backup(path string) error {
 	_, err := s.exec(`VACUUM INTO ?`, path)
 	return err
 }
+
+// FormatTime is how timestamps are stored.
+func FormatTime(t time.Time) string { return fmtTime(t) }
+
+// Context is the context this Store's queries run under.
+func (s *Store) Context() context.Context { return s.c() }
