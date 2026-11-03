@@ -183,7 +183,9 @@ func (s *Store) InboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 	}
 	for _, b := range bans {
 		if r := get(b.IP); r != nil {
-			r.Bans++
+			if !b.Restored {
+				r.Bans++
+			}
 			if b.HitsDuring > 0 {
 				r.Leaks++
 			}
@@ -697,9 +699,11 @@ func (s *Store) Flagged(q FlaggedQuery) ([]FlaggedRow, error) {
 			if err := s.queryRow(`SELECT count(*) FROM ids_alerts WHERE src_ip = ? AND ts >= ?`, r.Indicator, since).Scan(&r.Alerts); err != nil {
 				return nil, err
 			}
-			if err := s.queryRow(`SELECT count(*) FROM bans WHERE ip = ? AND event = 'ban' AND ts >= ?`, r.Indicator, since).Scan(&r.Bans); err != nil {
+			bc, err := s.BanCounts([]string{r.Indicator}, q.Since)
+			if err != nil {
 				return nil, err
 			}
+			r.Bans = bc[r.Indicator]
 		}
 		if roles[i]&RolesOut != 0 {
 			if r.Via, err = s.domainsResolvingTo(r.Indicator, since, 20); err != nil {

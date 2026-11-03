@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -471,6 +472,10 @@ type Intel struct {
 	Verdict string `json:"verdict,omitempty"`
 	// Special is set for special-purpose addresses and names (RFC 6890).
 	Special *enrich.Special `json:"special,omitempty"`
+	// Bans30d is how many times fail2ban banned this address in the last 30
+	// days, all jails, not counting restores across restarts. That's the
+	// window it remembers for doubling repeat bans.
+	Bans30d int64 `json:"bans_30d,omitempty"`
 	// Feeds are the lists it's on now.
 	Feeds []string `json:"feeds,omitempty"`
 	// Matches has every row, including lists it has dropped off. Only set
@@ -549,6 +554,19 @@ func (s *Store) Intel(inds []string, history bool) (map[string]*Intel, error) {
 		if err := rows.Err(); err != nil {
 			return nil, err
 		}
+	}
+	var ips []string
+	for _, ind := range inds {
+		if _, err := netip.ParseAddr(ind); err == nil {
+			ips = append(ips, ind)
+		}
+	}
+	bans, err := s.BanCounts(ips, time.Now().AddDate(0, 0, -30))
+	if err != nil {
+		return nil, err
+	}
+	for ip, n := range bans {
+		get(ip).Bans30d = n
 	}
 	// Special-purpose addresses and names get their context, listed or not.
 	for _, ind := range inds {

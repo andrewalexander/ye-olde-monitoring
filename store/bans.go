@@ -54,7 +54,15 @@ type Ban struct {
 	// HitsDuring counts requests that reached a site on a port the ban covers,
 	// while it was in force. Anything above zero means the block leaked.
 	HitsDuring int64 `json:"hits_during"`
+	// Restored: fail2ban re-applied a ban it already had, on restart. It
+	// shows as an unban of the same IP and jail just before (shutdown lifts
+	// every ban), so it's the same ban continuing, not a new one.
+	Restored bool `json:"restored,omitempty"`
 }
+
+// RestoreGap is how soon after an unban a ban of the same IP and jail is taken
+// to be fail2ban restoring it across a restart.
+const RestoreGap = 30 * time.Second
 
 // BanGrace is how long after a ban a request still doesn't count as getting
 // through: one already in flight when the rule went in is logged when it
@@ -75,7 +83,9 @@ func (s *Store) Bans(f BanFilter, now time.Time) ([]Ban, error) {
 	}
 	rows, err := s.query(`SELECT b.id, b.ts, b.jail, b.ip, b.ports, b.bantime_s, b.failures,
 		coalesce((SELECT min(u.ts) FROM bans u WHERE u.event = 'unban' AND u.ip = b.ip AND u.jail = b.jail
-			AND u.ts >= b.ts AND u.id > b.id), '')
+			AND u.ts >= b.ts AND u.id > b.id), ''),
+		coalesce((SELECT max(u.ts) FROM bans u WHERE u.event = 'unban' AND u.ip = b.ip AND u.jail = b.jail
+			AND u.ts <= b.ts AND u.id < b.id), '')
 		FROM bans b WHERE b.event = 'ban' AND b.ts >= ? AND (? = '' OR b.ip = ?) AND (? = '' OR b.jail = ?)
 		ORDER BY b.ts DESC, b.id DESC LIMIT ?`,
 		fmtTime(f.Since), f.IP, f.IP, f.Jail, f.Jail, f.Limit)
@@ -85,13 +95,16 @@ func (s *Store) Bans(f BanFilter, now time.Time) ([]Ban, error) {
 	var out []Ban
 	for rows.Next() {
 		var b Ban
-		var ts, unban string
+		var ts, unban, prevUnban string
 		var secs int64
-		if err := rows.Scan(&b.ID, &ts, &b.Jail, &b.IP, &b.Ports, &secs, &b.Failures, &unban); err != nil {
+		if err := rows.Scan(&b.ID, &ts, &b.Jail, &b.IP, &b.Ports, &secs, &b.Failures, &unban, &prevUnban); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		b.BannedAt, b.UnbannedAt, b.BanTime = parseTime(ts), parseTime(unban), time.Duration(secs)*time.Second
+		if prevUnban != "" && b.BannedAt.Sub(parseTime(prevUnban)) <= RestoreGap {
+			b.Restored = true
+		}
 		out = append(out, b)
 	}
 	rows.Close()
@@ -184,4 +197,48 @@ func portNum(s string) (int, error) {
 		return n, nil
 	}
 	return strconv.Atoi(s)
+}
+
+// BanCounts is how many times each IP was banned since `since`, across all
+// jails, not counting fail2ban restoring a ban across a restart.
+func (s *Store) BanCounts(ips []string, since time.Time) (map[string]int64, error) {
+	out := map[string]int64{}
+	for start := 0; start < len(ips); start += 400 {
+		chunk := ips[start:min(start+400, len(ips))]
+		// From a little before since, so an unban just before it can mark a
+		// ban just after it as a restore.
+		args := []any{fmtTime(since.Add(-RestoreGap))}
+		for _, ip := range chunk {
+			args = append(args, ip)
+		}
+		rows, err := s.query(`SELECT ip, jail, event, ts FROM bans WHERE event IN ('ban', 'unban') AND ts >= ?
+			AND ip IN (`+placeholders(len(chunk))+`) ORDER BY ip, jail, ts, id`, args...)
+		if err != nil {
+			return nil, err
+		}
+		lastUnban := map[string]time.Time{}
+		for rows.Next() {
+			var ip, jail, event, ts string
+			if err := rows.Scan(&ip, &jail, &event, &ts); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			t, k := parseTime(ts), ip+"\x00"+jail
+			if event == "unban" {
+				lastUnban[k] = t
+				continue
+			}
+			if u, ok := lastUnban[k]; ok && t.Sub(u) <= RestoreGap {
+				continue // a restore
+			}
+			if !t.Before(since) {
+				out[ip]++
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }

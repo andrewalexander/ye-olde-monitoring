@@ -90,3 +90,10 @@ Shared with the admin API (alerts and bans gain the fields above):
   (cpu/memory/io), load, available memory, per-unit CPU %, memory and
   pressure, explorer request p95/max and timeouts, newest DNS lookup and
   hit age. Thinned to points= by keeping each bucket's worst values.
+
+Bans: every address that carries intel also has "bans_30d", how many times
+fail2ban banned it in the last 30 days across all jails (the window it
+doubles repeat bans over). A ban fail2ban re-applies after a restart (an
+unban of the same address and jail within 30s before it) isn't counted: on
+/api/bans those rows have "restored": true. Hits and trips carry intel on
+the explorer too.

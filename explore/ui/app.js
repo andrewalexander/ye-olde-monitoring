@@ -150,6 +150,11 @@ function col(title, field, kind, extra) {
   }
   return c;
 }
+// How often fail2ban banned the address in the last 30 days (all jails, not
+// counting restores across restarts): the window it doubles repeat bans over.
+function bans30() {
+  return col("Bans 30d", "bans_30d", "num", { headerTooltip: "Times fail2ban banned this address in the last 30 days, all jails, not counting restarts" });
+}
 function rank(v) { return { malicious: 3, suspicious: 2, info: 1 }[v] || 0; }
 
 function table(container, rows, columns, opts) {
@@ -184,7 +189,7 @@ const LIST_VIEWS = {
       col("Verdict", "verdict", "verdict"), col("IP", "ip", "ip"), col("Feeds", "feeds", "tags"),
       col("AS", "asn", "text", { formatter: (c) => document.createTextNode(asnText(c.getRow().getData())) }),
       col("Owner", "as_owner"), col("CC", "country"),
-      col("Hits", "hits", "num"), col("4xx", "errors_4xx", "num"), col("Bans", "bans", "num"),
+      col("Hits", "hits", "num"), col("4xx", "errors_4xx", "num"), col("Bans", "bans", "num"), bans30(),
       col("Leaks", "leaks", "leak"), col("Alerts", "alerts_allowed", "num"), col("Blocked", "alerts_blocked", "num"),
       col("Trips", "trips", "num"), col("Sites", "sites", "list"), col("First", "first", "time"), col("Last", "last", "time"),
     ],
@@ -225,7 +230,7 @@ const LIST_VIEWS = {
       col("Kind", "kind"), col("Dir", "direction"), col("Feeds", "feeds", "tags"),
       col("AS", "asn", "text", { formatter: (c) => document.createTextNode(asnText(c.getRow().getData())) }),
       col("Owner", "as_owner"), col("CC", "country"),
-      col("Hits", "hits", "num"), col("Alerts", "alerts", "num"), col("Bans", "bans", "num"),
+      col("Hits", "hits", "num"), col("Alerts", "alerts", "num"), col("Bans", "bans", "num"), bans30(),
       col("LAN clients", "clients", "list", {
         formatter: (c) => el("span", { class: "tags" }, (c.getValue() || []).map(clientLink)),
         headerFilterFunc: (t, v) => (v || []).some((x) => x.ip.includes(t) || (x.name || "").toLowerCase().includes(String(t).toLowerCase())),
@@ -244,7 +249,7 @@ const LIST_VIEWS = {
       col("Time", "ts", "time"), col("Site", "site"), col("Client", "client_ip", "ip"), col("Method", "method"),
       col("Host", "host"), col("Path", "path", "text", { maxWidth: 420 }), col("Query", "query", "text", { maxWidth: 240 }),
       col("Status", "status", "num"), col("Bytes", "bytes", "bytes"), col("User agent", "user_agent", "text", { maxWidth: 320 }),
-      col("Referer", "referer", "text", { maxWidth: 240 }),
+      col("Referer", "referer", "text", { maxWidth: 240 }), bans30(), col("Feeds", "feeds", "tags"),
     ],
   },
   bans: {
@@ -255,7 +260,8 @@ const LIST_VIEWS = {
       col("Banned", "banned_at", "time"), col("Jail", "jail"), col("IP", "ip", "ip"), col("Verdict", "verdict", "verdict"),
       col("Feeds", "feeds", "tags"), col("CC", "country"), col("Failures", "failures", "num"), col("For", "bantime_ns", "dur"),
       col("Unbanned", "unbanned_at", "time", { formatter: (c) => document.createTextNode(fmtTime(c.getValue()) || "still banned") }),
-      col("Hits 24h before", "hits_24h_before", "num"), col("Hits during", "hits_during", "leak"),
+      col("Hits 24h before", "hits_24h_before", "num"), col("Hits during", "hits_during", "leak"), bans30(),
+      col("Restart", "restored", "bool", { headerTooltip: "fail2ban re-applying this ban after a restart: the ban before it continuing, not a new one", formatter: (c) => document.createTextNode(c.getValue() ? "restored" : "") }),
     ],
   },
   alerts: {
@@ -269,7 +275,7 @@ const LIST_VIEWS = {
       col("Policy", "policy"),
       col("Verdict", "verdict", "verdict"), col("Feeds", "feeds", "tags"), col("CC", "country"),
       col("Signature", "signature", "text", { maxWidth: 380 }), col("Category", "category"),
-      col("Severity", "severity", "num"), col("Source hits", "src_hits", "num"),
+      col("Severity", "severity", "num"), col("Source hits", "src_hits", "num"), bans30(),
     ],
   },
   trips: {
@@ -279,7 +285,7 @@ const LIST_VIEWS = {
     columns: () => [
       col("Tripped", "tripped_at", "time"), col("Breaker", "breaker"), col("Who", "key", "ip"), col("Reason", "reason"),
       col("Events", "window_events", "num"), col("Bad", "window_bad", "num"),
-      col("Suppressed", "suppressed_during_cooldown", "num"), col("Ended", "ended_at", "time"),
+      col("Suppressed", "suppressed_during_cooldown", "num"), col("Ended", "ended_at", "time"), bans30(),
     ],
   },
 };
@@ -363,6 +369,7 @@ function intelCard(intel) {
     ["On lists", tags(intel.feeds)],
     ["AS", intel.asn ? `AS${intel.asn} ${intel.as_owner || ""}` : "unknown"],
     ["Country", intel.country || ""],
+    ["Banned (30 days)", intel.bans_30d ? `${intel.bans_30d} time${intel.bans_30d === 1 ? "" : "s"}` : undefined],
   ]));
   return card;
 }
@@ -376,6 +383,9 @@ function matchesTable(main, matches) {
     col("First listed", "first_listed", "time"), col("Last listed", "last_listed", "time"), col("Removed", "removed_at", "time"),
   ]);
 }
+
+// On an IP's own page its intel is in the card at the top, not on every row.
+const perIP = (c) => !["verdict", "feeds", "country", "bans_30d"].includes(c.field);
 
 async function renderIP(ip) {
   const main = $main();
@@ -398,13 +408,13 @@ async function renderIP(ip) {
   table(main, p.resolved_from, [col("Domain", "domain", "domain"), col("Answers", "count", "num"), col("Last", "last", "time"),
     col("LAN clients", "clients", "list", { formatter: (c) => el("span", { class: "tags" }, (c.getValue() || []).map(clientLink)) })]);
   main.append(el("h2", { text: "Requests to our sites (incoming)" }));
-  table(main, p.hits, LIST_VIEWS.hits.columns());
+  table(main, p.hits, LIST_VIEWS.hits.columns().filter(perIP));
   main.append(el("h2", { text: "Bans" }));
-  table(main, p.bans, LIST_VIEWS.bans.columns().filter((c) => !["verdict", "feeds", "country"].includes(c.field)));
+  table(main, p.bans, LIST_VIEWS.bans.columns().filter(perIP));
   main.append(el("h2", { text: "IDS alerts" }));
-  table(main, p.alerts, LIST_VIEWS.alerts.columns().filter((c) => !["verdict", "feeds", "country"].includes(c.field)));
+  table(main, p.alerts, LIST_VIEWS.alerts.columns().filter(perIP));
   main.append(el("h2", { text: "Breaker trips" }));
-  table(main, p.trips, LIST_VIEWS.trips.columns());
+  table(main, p.trips, LIST_VIEWS.trips.columns().filter(perIP));
   if ((p.sightings || []).length) sightingsTable(main, p.sightings);
   if ((p.asn_changes || []).length) {
     main.append(el("h2", { text: "AS changes" }));
@@ -429,7 +439,7 @@ async function renderDomain(d) {
     col("Status", "status"), col("Verdict", "verdict", "verdict"), col("Feeds", "feeds", "tags"),
     col("Special-purpose", "special", "text", { formatter: (c) => document.createTextNode(c.getValue() ? c.getValue().name : "") }),
     col("AS", "asn", "text", { formatter: (c) => document.createTextNode(asnText(c.getRow().getData())) }), col("Owner", "as_owner"), col("CC", "country"),
-    col("Count", "count", "num"), col("Last", "last", "time")]);
+    bans30(), col("Count", "count", "num"), col("Last", "last", "time")]);
   main.append(el("h2", { text: "Logged connections to those addresses" }));
   table(main, p.connections, connColumns());
 }

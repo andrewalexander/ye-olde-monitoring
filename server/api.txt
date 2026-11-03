@@ -144,6 +144,9 @@ ADMIN (all GET, all JSON)
   hits_during: requests from that IP that reached a site on a port the ban
   covers while it was in force (after a 5s grace for requests already in
   flight). Anything above 0 means the block leaked.
+  restored: true when fail2ban re-applied the ban after a restart (it was
+  unbanned in the same jail within 30s before): the ban before it
+  continuing, not a new one.
 
 /api/trips?[ip=][&breaker=counter|ingest|syslog|syslog-not-allowed][&since=][&limit=]
   Circuit-breaker trips, newest first (without the detail blob).

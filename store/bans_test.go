@@ -147,3 +147,68 @@ func TestBansFromFail2banLog(t *testing.T) {
 		t.Errorf("caddy-probe bans:\n got %q\nwant %q", got, want)
 	}
 }
+
+// A restart lifts every ban (unban) and re-applies it (Restore Ban) a second
+// or two later. That's one ban continuing: it's marked restored and never
+// counted as another ban.
+func TestBanCountsSkipRestores(t *testing.T) {
+	x := openExplorer(t)
+	st := x.primary
+	t0 := time.Now().UTC().Add(-10 * 24 * time.Hour).Truncate(time.Second)
+	a := "203.0.113.70"
+	for _, b := range []ingest.Ban{
+		{TS: t0, Event: "ban", Jail: "caddy-probe", IP: a},
+		{TS: t0.Add(time.Hour), Event: "unban", Jail: "caddy-probe", IP: a},                                  // expired
+		{TS: t0.Add(5 * time.Hour), Event: "ban", Jail: "caddy-probe", IP: a},                                // came back: a real repeat
+		{TS: t0.Add(5*time.Hour + 10*time.Minute), Event: "unban", Jail: "caddy-probe", IP: a},               // fail2ban stopping
+		{TS: t0.Add(5*time.Hour + 10*time.Minute + 2*time.Second), Event: "ban", Jail: "caddy-probe", IP: a}, // Restore Ban
+		{TS: t0.Add(5*time.Hour + 10*time.Minute + 3*time.Second), Event: "ban", Jail: "jellyfin", IP: a},    // another jail: real
+		{TS: t0.Add(-40 * 24 * time.Hour), Event: "ban", Jail: "sshd", IP: a},                                // older than 30 days
+	} {
+		ban(t, st, b)
+	}
+
+	bans, err := st.Bans(store.BanFilter{IP: a}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := 0
+	for _, b := range bans {
+		if b.Restored {
+			restored++
+			if b.BannedAt != t0.Add(5*time.Hour+10*time.Minute+2*time.Second) || b.Jail != "caddy-probe" {
+				t.Errorf("wrong ban marked restored: %+v", b)
+			}
+		}
+	}
+	if len(bans) != 5 || restored != 1 {
+		t.Errorf("%d bans, %d restored; want 5 and 1", len(bans), restored)
+	}
+
+	for _, c := range []struct {
+		since time.Time
+		want  int64
+	}{
+		{t0.Add(-time.Minute), 3},                               // the two caddy-probe bans and the jellyfin one
+		{t0.Add(5*time.Hour + 10*time.Minute + time.Second), 1}, // just the jellyfin one, though the restore is after since
+		{t0.Add(-50 * 24 * time.Hour), 4},                       // the old sshd ban too
+	} {
+		got, err := st.BanCounts([]string{a, "198.51.100.1"}, c.since)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[a] != c.want || got["198.51.100.1"] != 0 {
+			t.Errorf("since %v: %v, want %d", c.since, got, c.want)
+		}
+	}
+
+	// Wherever the explorer shows the address, it says how often it was banned.
+	in, err := x.ro.Intel([]string{a}, false)
+	if err != nil || in[a] == nil || in[a].Bans30d != 3 {
+		t.Errorf("intel: %+v %v", in[a], err)
+	}
+	ips, err := x.ro.InboundIPs(store.ListQuery{Since: t0.Add(-time.Hour)}, time.Now())
+	if err != nil || len(ips) != 1 || ips[0].Bans != 3 || ips[0].Bans30d != 3 {
+		t.Errorf("inbound: %+v %v", ips, err)
+	}
+}

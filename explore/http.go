@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"dnscount/enrich"
+	"dnscount/hit"
 	"dnscount/server"
 	"dnscount/store"
 )
@@ -67,6 +68,41 @@ func (x *Explorer) Handler() http.Handler {
 		out := make([]row, len(bans))
 		for i, b := range bans {
 			out[i] = row{b, intel[b.IP]}
+		}
+		return out, err
+	})
+
+	// Hits and trips get the same per-address intel (lists, AS, bans_30d).
+	routes["GET /api/hits"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
+		hits, err := st.Hits(store.HitFilter{Site: p.Str("site"), IP: p.Str("ip"), Status: p.Str("status"),
+			Since: p.Since(), Limit: p.Int("limit")})
+		if err != nil {
+			return nil, err
+		}
+		intel, err := st.Intel(keys(hits, func(h hit.Hit) string { return h.ClientIP }), false)
+		type row struct {
+			hit.Hit
+			*store.Intel
+		}
+		out := make([]row, len(hits))
+		for i, x := range hits {
+			out[i] = row{x, intel[x.ClientIP]}
+		}
+		return out, err
+	})
+	routes["GET /api/trips"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
+		trips, err := st.Trips(store.TripFilter{Since: p.Since(), Key: p.Str("ip"), Breaker: p.Str("breaker"), Limit: p.Int("limit")})
+		if err != nil {
+			return nil, err
+		}
+		intel, err := st.Intel(keys(trips, func(t store.Trip) string { return t.Key }), false)
+		type row struct {
+			store.Trip
+			*store.Intel
+		}
+		out := make([]row, len(trips))
+		for i, x := range trips {
+			out[i] = row{x, intel[x.Key]}
 		}
 		return out, err
 	})
