@@ -151,7 +151,7 @@ func (s *Store) group(q GroupQuery, table string, cols []string, filter string, 
 		)
 		SELECT ` + keys + `, n, total, firstseen FROM ranked` + where + `
 		ORDER BY ` + order + `, k0, n DESC, ` + keys + ` LIMIT ?`
-	rows, err := s.db.Query(stmt, append(args, fmtTime(q.Since), q.Limit)...)
+	rows, err := s.query(stmt, append(args, fmtTime(q.Since), q.Limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +203,7 @@ func (s *Store) Hits(f HitFilter) ([]hit.Hit, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT line_hash, ts, site, source, client_ip, forwarded_for, method, host, path,
+	rows, err := s.query(`SELECT line_hash, ts, site, source, client_ip, forwarded_for, method, host, path,
 		query, status, bytes, user_agent, referer FROM hits
 		WHERE ts >= ? AND (? = '' OR site = ?) AND (? = '' OR client_ip = ?) AND status BETWEEN ? AND ?
 		ORDER BY ts DESC LIMIT ?`, fmtTime(f.Since), f.Site, f.Site, f.IP, f.IP, lo, hi, f.Limit)
@@ -239,7 +239,7 @@ type ClientLookups struct {
 // DNSByDomain: which clients looked up domain (or a subdomain), how many
 // times, first and last.
 func (s *Store) DNSByDomain(domain string, since time.Time) ([]ClientLookups, error) {
-	rows, err := s.db.Query(`SELECT client_ip, max(client_name), count(*), min(ts), max(ts) FROM dns_queries
+	rows, err := s.query(`SELECT client_ip, max(client_name), count(*), min(ts), max(ts) FROM dns_queries
 		WHERE `+domainMatch+` AND ts >= ?2 GROUP BY client_ip ORDER BY 3 DESC, 1`, domain, fmtTime(since))
 	if err != nil {
 		return nil, err
@@ -269,7 +269,7 @@ func (s *Store) DNSByClient(ip string, since time.Time, limit int) ([]DomainLook
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.Query(`SELECT domain, count(*), min(ts), max(ts) FROM dns_queries
+	rows, err := s.query(`SELECT domain, count(*), min(ts), max(ts) FROM dns_queries
 		WHERE client_ip = ? AND ts >= ? GROUP BY domain ORDER BY 2 DESC, 1 LIMIT ?`, ip, fmtTime(since), limit)
 	if err != nil {
 		return nil, err
@@ -326,7 +326,7 @@ func (s *Store) ConnsForClient(ip string, since time.Time) ([]ConnStat, error) {
 }
 
 func (s *Store) conns(q string, args ...any) ([]ConnStat, error) {
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -363,11 +363,11 @@ func (s *Store) IPHistory(ip string) (IPHistory, error) {
 		{&h.Connections, `SELECT count(*), coalesce(min(ts),''), coalesce(max(ts),'') FROM connections WHERE client_ip = ?1 OR dst_ip = ?1`},
 	} {
 		var first, last string
-		if err := s.db.QueryRow(x.q, ip).Scan(&x.dst.Count, &first, &last); err != nil {
+		if err := s.queryRow(x.q, ip).Scan(&x.dst.Count, &first, &last); err != nil {
 			return h, err
 		}
 		x.dst.First, x.dst.Last = parseTime(first), parseTime(last)
 	}
-	err := s.db.QueryRow(`SELECT count(*) FROM breaker_trips WHERE key = ?`, ip).Scan(&h.Trips)
+	err := s.queryRow(`SELECT count(*) FROM breaker_trips WHERE key = ?`, ip).Scan(&h.Trips)
 	return h, err
 }

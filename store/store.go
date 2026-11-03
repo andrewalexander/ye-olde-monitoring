@@ -2,6 +2,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
 	"fmt"
@@ -27,7 +28,33 @@ func parseTime(s string) time.Time {
 }
 
 type Store struct {
-	db *sql.DB
+	db  *sql.DB
+	ctx context.Context // nil means context.Background()
+}
+
+// WithContext returns a Store whose queries run under ctx, so a request
+// deadline cancels a slow query instead of letting it hold a read open.
+func (s *Store) WithContext(ctx context.Context) *Store {
+	c := *s
+	c.ctx = ctx
+	return &c
+}
+
+func (s *Store) c() context.Context {
+	if s.ctx == nil {
+		return context.Background()
+	}
+	return s.ctx
+}
+
+func (s *Store) query(q string, args ...any) (*sql.Rows, error) {
+	return s.db.QueryContext(s.c(), q, args...)
+}
+func (s *Store) queryRow(q string, args ...any) *sql.Row {
+	return s.db.QueryRowContext(s.c(), q, args...)
+}
+func (s *Store) exec(q string, args ...any) (sql.Result, error) {
+	return s.db.ExecContext(s.c(), q, args...)
 }
 
 // Open opens (creating if needed) the database at path. ":memory:" works for
@@ -64,7 +91,7 @@ const bumpCounter = `INSERT INTO counters(site, count) VALUES (?, 1)
 // set bump their site's counter, but only if the hit wasn't a duplicate.
 // It returns how many were new.
 func (s *Store) InsertHits(hits []hit.Hit) (int, error) {
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(s.c(), nil)
 	if err != nil {
 		return 0, err
 	}
@@ -91,7 +118,7 @@ func (s *Store) InsertHits(hits []hit.Hit) (int, error) {
 // Counter returns the public counter for site.
 func (s *Store) Counter(site string) (int64, error) {
 	var n int64
-	err := s.db.QueryRow(`SELECT count FROM counters WHERE site = ?`, site).Scan(&n)
+	err := s.queryRow(`SELECT count FROM counters WHERE site = ?`, site).Scan(&n)
 	if err == sql.ErrNoRows {
 		return 0, nil
 	}
@@ -101,7 +128,7 @@ func (s *Store) Counter(site string) (int64, error) {
 // InsertRecords stores parsed log records in one transaction and returns how
 // many rows were new across all tables.
 func (s *Store) InsertRecords(recs []ingest.Record) (int, error) {
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(s.c(), nil)
 	if err != nil {
 		return 0, err
 	}
@@ -172,6 +199,6 @@ func (s *Store) InsertRecords(recs []ingest.Record) (int, error) {
 // Backup writes a consistent copy of the database to path (which must not
 // exist) without stopping writers.
 func (s *Store) Backup(path string) error {
-	_, err := s.db.Exec(`VACUUM INTO ?`, path)
+	_, err := s.exec(`VACUUM INTO ?`, path)
 	return err
 }

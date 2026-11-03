@@ -43,7 +43,7 @@ func (s *Store) Alerts(f AlertFilter) ([]Alert, error) {
 	if f.Limit <= 0 {
 		f.Limit = 100
 	}
-	rows, err := s.db.Query(`SELECT a.id, a.ts, a.src_ip, a.src_port, a.dst_ip, a.dst_port, a.proto, a.action,
+	rows, err := s.query(`SELECT a.id, a.ts, a.src_ip, a.src_port, a.dst_ip, a.dst_port, a.proto, a.action,
 		a.signature, a.signature_id, a.category, a.severity, a.source,
 		(SELECT count(*) FROM hits h WHERE h.client_ip = a.src_ip AND h.ts >= ?)
 		FROM ids_alerts a WHERE `+alertWhere+` ORDER BY a.ts DESC, a.id DESC LIMIT ?`,
@@ -80,7 +80,7 @@ func (s *Store) TopAlerts(by string, f AlertFilter) ([]KV, error) {
 	if f.Limit <= 0 {
 		f.Limit = 25
 	}
-	rows, err := s.db.Query(`SELECT `+col+`, count(*), min(ts) FROM ids_alerts WHERE `+alertWhere+`
+	rows, err := s.query(`SELECT `+col+`, count(*), min(ts) FROM ids_alerts WHERE `+alertWhere+`
 		GROUP BY `+col+` ORDER BY count(*) DESC, `+col+` LIMIT ?`, append(f.args(), f.Limit)...)
 	if err != nil {
 		return nil, err

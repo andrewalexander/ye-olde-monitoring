@@ -22,7 +22,7 @@ type Trip struct {
 }
 
 func (s *Store) InsertTrip(t Trip) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO breaker_trips (tripped_at, cooldown_until, breaker, key, reason,
+	res, err := s.exec(`INSERT INTO breaker_trips (tripped_at, cooldown_until, breaker, key, reason,
 		window_events, window_bad, suppressed_during_cooldown, first_seen_in_window, detail_json)
 		VALUES (?,?,?,?,?,?,?,?,?,?)`, fmtTime(t.TrippedAt), fmtTime(t.CooldownUntil), t.Breaker, t.Key, t.Reason,
 		t.WindowEvents, t.WindowBad, t.Suppressed, fmtTime(t.FirstSeen), string(t.Detail))
@@ -38,7 +38,7 @@ func (s *Store) EndTrip(id int64, ended time.Time, suppressed int, lateSamples j
 	if len(lateSamples) == 0 {
 		lateSamples = json.RawMessage("[]")
 	}
-	_, err := s.db.Exec(`UPDATE breaker_trips SET ended_at = ?, suppressed_during_cooldown = ?,
+	_, err := s.exec(`UPDATE breaker_trips SET ended_at = ?, suppressed_during_cooldown = ?,
 		detail_json = json_set(detail_json, '$.late_samples', json(?)) WHERE id = ?`,
 		fmtTime(ended), suppressed, string(lateSamples), id)
 	return err
@@ -57,7 +57,7 @@ func (s *Store) Trips(f TripFilter) ([]Trip, error) {
 	if f.Limit <= 0 {
 		f.Limit = 100
 	}
-	rows, err := s.db.Query(`SELECT id, tripped_at, cooldown_until, ended_at, breaker, key, reason,
+	rows, err := s.query(`SELECT id, tripped_at, cooldown_until, ended_at, breaker, key, reason,
 		window_events, window_bad, suppressed_during_cooldown, first_seen_in_window, '' FROM breaker_trips
 		WHERE tripped_at >= ? AND (? = '' OR key = ?) AND (? = '' OR breaker = ?)
 		ORDER BY tripped_at DESC, id DESC LIMIT ?`,
@@ -79,14 +79,14 @@ func (s *Store) Trips(f TripFilter) ([]Trip, error) {
 
 // Trip returns one trip with its full detail.
 func (s *Store) Trip(id int64) (Trip, error) {
-	return scanTrip(s.db.QueryRow(`SELECT id, tripped_at, cooldown_until, ended_at, breaker, key, reason,
+	return scanTrip(s.queryRow(`SELECT id, tripped_at, cooldown_until, ended_at, breaker, key, reason,
 		window_events, window_bad, suppressed_during_cooldown, first_seen_in_window, detail_json
 		FROM breaker_trips WHERE id = ?`, id))
 }
 
 func (s *Store) TripCount(key string) (int64, error) {
 	var n int64
-	err := s.db.QueryRow(`SELECT count(*) FROM breaker_trips WHERE key = ?`, key).Scan(&n)
+	err := s.queryRow(`SELECT count(*) FROM breaker_trips WHERE key = ?`, key).Scan(&n)
 	return n, err
 }
 

@@ -29,7 +29,7 @@ func (s *Store) Check(now time.Time) ([]string, error) {
 	}
 	for _, c := range counts {
 		var n int
-		if err := s.db.QueryRow(c.q).Scan(&n); err != nil {
+		if err := s.queryRow(c.q).Scan(&n); err != nil {
 			return nil, fmt.Errorf("%s: %w", c.what, err)
 		}
 		if n > 0 {
@@ -52,7 +52,7 @@ func (s *Store) Check(now time.Time) ([]string, error) {
 }
 
 func (s *Store) countBadIPs(table, col string) (int, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT ` + col + ` FROM ` + table)
+	rows, err := s.query(`SELECT DISTINCT ` + col + ` FROM ` + table)
 	if err != nil {
 		return 0, err
 	}

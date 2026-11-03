@@ -35,7 +35,7 @@ func (s *Store) InsertBan(b ingest.Ban) error {
 	if b.Hash == "" {
 		b.Hash = hit.NewID()
 	}
-	_, err := s.db.Exec(insertBan, banArgs(&b)...)
+	_, err := s.exec(insertBan, banArgs(&b)...)
 	return err
 }
 
@@ -73,7 +73,7 @@ func (s *Store) Bans(f BanFilter, now time.Time) ([]Ban, error) {
 	if f.Limit <= 0 {
 		f.Limit = 100
 	}
-	rows, err := s.db.Query(`SELECT b.id, b.ts, b.jail, b.ip, b.ports, b.bantime_s, b.failures,
+	rows, err := s.query(`SELECT b.id, b.ts, b.jail, b.ip, b.ports, b.bantime_s, b.failures,
 		coalesce((SELECT min(u.ts) FROM bans u WHERE u.event = 'unban' AND u.ip = b.ip AND u.jail = b.jail
 			AND u.ts >= b.ts AND u.id > b.id), '')
 		FROM bans b WHERE b.event = 'ban' AND b.ts >= ? AND (? = '' OR b.ip = ?) AND (? = '' OR b.jail = ?)
@@ -107,7 +107,7 @@ func (s *Store) Bans(f BanFilter, now time.Time) ([]Ban, error) {
 }
 
 func (s *Store) banHits(b *Ban, now time.Time) error {
-	if err := s.db.QueryRow(`SELECT count(*) FROM hits WHERE client_ip = ? AND ts >= ? AND ts < ?`,
+	if err := s.queryRow(`SELECT count(*) FROM hits WHERE client_ip = ? AND ts >= ? AND ts < ?`,
 		b.IP, fmtTime(b.BannedAt.Add(-24*time.Hour)), fmtTime(b.BannedAt)).Scan(&b.HitsBefore); err != nil {
 		return err
 	}
@@ -115,7 +115,7 @@ func (s *Store) banHits(b *Ban, now time.Time) error {
 	if end.IsZero() {
 		end = now
 	}
-	rows, err := s.db.Query(`SELECT host FROM hits WHERE client_ip = ? AND ts >= ? AND ts < ?`,
+	rows, err := s.query(`SELECT host FROM hits WHERE client_ip = ? AND ts >= ? AND ts < ?`,
 		b.IP, fmtTime(b.BannedAt.Add(BanGrace)), fmtTime(end))
 	if err != nil {
 		return err
