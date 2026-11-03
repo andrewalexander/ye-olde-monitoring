@@ -21,14 +21,19 @@ func TestFail2banLog(t *testing.T) {
 	}
 	var bans []ingest.Ban
 	now := time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)
+	var increases []ingest.Ban
 	st, err := ingest.Run(f, &f2b.Fail2ban{Ports: ports}, now, func(r ingest.Record) error {
-		bans = append(bans, *r.Ban)
+		if r.Ban.Event == "increase" {
+			increases = append(increases, *r.Ban)
+		} else {
+			bans = append(bans, *r.Ban)
+		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (ingest.Stats{Lines: 16, Records: 6, Skipped: 9, Bad: 1}); st != want {
+	if want := (ingest.Stats{Lines: 20, Records: 11, Skipped: 8, Bad: 1}); st != want {
 		t.Errorf("stats = %+v, want %+v", st, want)
 	}
 	est := time.FixedZone("", -5*3600)
@@ -39,6 +44,14 @@ func TestFail2banLog(t *testing.T) {
 		{TS: time.Date(2026, 10, 27, 22, 0, 0, 0, est), Event: "unban", Jail: "caddy-probe", IP: "198.51.100.4"},
 		{TS: time.Date(2026, 10, 27, 22, 0, 5, 0, est), Event: "ban", Jail: "caddy-probe", IP: "198.51.100.4"},
 		{TS: time.Date(2026, 10, 27, 22, 10, 0, 0, est), Event: "ban", Jail: "sshd", IP: "2001:db8::7", Ports: "ssh"},
+		// fail2ban 1.1 order: the increase comes after the ban, so the store
+		// applies it. It must not stick to the next, unrelated ban.
+		{TS: time.Date(2026, 10, 27, 23, 28, 54, 0, est), Event: "ban", Jail: "caddy-probe", IP: "203.0.113.50"},
+		{TS: time.Date(2026, 10, 27, 23, 40, 0, 0, est), Event: "unban", Jail: "caddy-probe", IP: "203.0.113.50"},
+		{TS: time.Date(2026, 10, 27, 23, 50, 0, 0, est), Event: "ban", Jail: "caddy-probe", IP: "203.0.113.50"},
+	}
+	if len(increases) != 2 || increases[0].BanTime != 48*time.Hour || increases[1].BanTime != 36*time.Hour {
+		t.Errorf("increases = %+v, want 2d and 1d12h", increases)
 	}
 	if len(bans) != len(want) {
 		t.Fatalf("got %d bans: %+v", len(bans), bans)

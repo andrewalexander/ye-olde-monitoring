@@ -157,7 +157,11 @@ func (s *Store) InsertRecords(recs []ingest.Record) (int, error) {
 			}
 		}
 		if b := r.Ban; b != nil {
-			if err := exec(insertBan, banArgs(b)...); err != nil {
+			q, args := insertBan, banArgs(b)
+			if b.Event == "increase" {
+				q, args = increaseBan, []any{int64(b.BanTime / time.Second), b.Jail, b.IP, fmtTime(b.TS), fmtTime(b.TS.Add(-time.Minute))}
+			}
+			if err := exec(q, args...); err != nil {
 				return 0, err
 			}
 		}

@@ -7,6 +7,7 @@ import (
 
 	"dnscount/hit"
 	"dnscount/ingest"
+	"dnscount/ingest/f2b"
 	"dnscount/ingest/ids"
 	"dnscount/store"
 )
@@ -119,5 +120,30 @@ func TestAlerts(t *testing.T) {
 	}
 	if _, err := st.TopAlerts("src_ip; DROP TABLE hits", store.AlertFilter{}); err == nil {
 		t.Error("accepted an unknown column")
+	}
+}
+
+// fail2ban's own log, end to end: ban lengths land on the right bans whichever
+// order fail2ban logs "Increase Ban" in, and re-reading changes nothing.
+func TestBansFromFail2banLog(t *testing.T) {
+	st := open(t)
+	importFile(t, st, "fail2ban.log", &f2b.Fail2ban{})
+	importFile(t, st, "fail2ban.log", &f2b.Fail2ban{})
+	bans, err := st.Bans(store.BanFilter{Jail: "caddy-probe"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, b := range bans {
+		got = append(got, fmt.Sprintf("%s %s %v", b.BannedAt.Format("15:04"), b.IP, b.BanTime))
+	}
+	want := []string{
+		"04:50 203.0.113.50 0s",      // a later ban: no increase logged for it
+		"04:28 203.0.113.50 36h0m0s", // increase logged after the ban
+		"03:00 198.51.100.4 0s",      // Restore Ban
+		"02:30 198.51.100.4 48h0m0s", // increase logged before the ban
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("caddy-probe bans:\n got %q\nwant %q", got, want)
 	}
 }

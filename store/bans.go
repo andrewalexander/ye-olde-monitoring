@@ -14,6 +14,11 @@ import (
 const insertBan = `INSERT OR IGNORE INTO bans (ts, event, jail, ip, ports, bantime_s, failures, line_hash)
 	VALUES (?,?,?,?,?,?,?,?)`
 
+// increaseBan sets the length of the ban fail2ban made just before logging
+// "Increase Ban". Applying it twice changes nothing.
+const increaseBan = `UPDATE bans SET bantime_s = ? WHERE id = (SELECT id FROM bans
+	WHERE event = 'ban' AND jail = ? AND ip = ? AND ts <= ? AND ts >= ? ORDER BY ts DESC, id DESC LIMIT 1)`
+
 func banArgs(b *ingest.Ban) []any {
 	return []any{fmtTime(b.TS), b.Event, b.Jail, b.IP, b.Ports, int64(b.BanTime / time.Second), b.Failures, b.Hash}
 }

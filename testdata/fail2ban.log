@@ -14,3 +14,7 @@
 2026-10-27T22:00:05-05:00 server fail2ban.actions[68000]: NOTICE [caddy-probe] Restore Ban 198.51.100.4
 2026-10-27T22:10:00-05:00 server fail2ban.actions[68000]: NOTICE [sshd] Ban 2001:db8::7
 2026-10-27T22:11:00-05:00 server fail2ban.actions[68000]: NOTICE [sshd] Ban not-an-ip
+2026-10-27T23:28:54-05:00 server fail2ban.actions[69000]: NOTICE [caddy-probe] Ban 203.0.113.50
+2026-10-27T23:28:54-05:00 server fail2ban.actions[69000]: NOTICE [caddy-probe] Increase Ban 203.0.113.50 (2 # 1d 12h -> 2026-10-29 11:28:54)
+2026-10-27T23:40:00-05:00 server fail2ban.actions[69000]: NOTICE [caddy-probe] Unban 203.0.113.50
+2026-10-27T23:50:00-05:00 server fail2ban.actions[69000]: NOTICE [caddy-probe] Ban 203.0.113.50

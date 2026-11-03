@@ -72,7 +72,7 @@ type IDSAlert struct {
 type Ban struct {
 	Hash     string
 	TS       time.Time
-	Event    string // ban | unban
+	Event    string // ban | unban | increase (sets the length of the ban just made)
 	Jail     string
 	IP       string
 	Ports    string // the jail's port setting ("80,443", "ssh"); empty means all
