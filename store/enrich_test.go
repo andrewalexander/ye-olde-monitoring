@@ -2,9 +2,9 @@ package store_test
 
 import (
 	"bytes"
-	"database/sql"
 	"compress/gzip"
 	"context"
+	"database/sql"
 	"path/filepath"
 	"slices"
 	"strconv"
