@@ -38,13 +38,13 @@ func TestDeviceNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	for ip, want := range map[string]string{
-		"192.168.1.230":          "Mac",            // DHCP hostname
+		"192.168.1.230":   "Mac",            // DHCP hostname
 		"2606:4700:10::5": "Mac",            // IPv6, named through the MAC DHCP saw
 		"2606:4700:10::7": "Kitchen tablet", // through the MAC UniFi named
-		"192.168.1.131":          "Kitchen tablet", // the alias you set beats the hostname
-		"172.16.0.102":           "",               // a lease with no hostname
-		"192.168.1.50":           "new-phone",      // whoever has it now
-		"172.16.0.10":            "media-server",   // not "media-server 00:0d"
+		"192.168.1.131":   "Kitchen tablet", // the alias you set beats the hostname
+		"172.16.0.102":    "",               // a lease with no hostname
+		"192.168.1.50":    "new-phone",      // whoever has it now
+		"172.16.0.10":     "media-server",   // not "media-server 00:0d"
 	} {
 		d, ok := dev[ip]
 		if !ok || d.Name != want {

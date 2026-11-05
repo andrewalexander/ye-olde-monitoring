@@ -256,21 +256,21 @@ func TestCensys(t *testing.T) {
 func TestGate(t *testing.T) {
 	g := &Gate{LAN: map[string]bool{"2606:4700:10::5": true, "93.184.216.34": true}, Own: []string{"ourdomain.example"}}
 	for ind, want := range map[string]bool{
-		"185.242.226.118":              true,
-		"8.8.8.8":                      true,
-		"192.168.1.20":                 false, // private
-		"100.64.1.1":                   false, // CGNAT
-		"192.0.0.170":                  false, // NAT64 discovery
-		"203.0.113.9":                  false, // documentation
-		"2001:db8::1":                  false, // documentation
-		"2606:4700:10::5":       false, // a LAN device's global IPv6
-		"93.184.216.34":                false, // public, but a LAN device's
-		"::ffff:192.168.1.20":          false,
-		"jssdk.juneworewyjyna.com":     true,
-		"mac":                          false, // single label
-		"printer.lan":                  false,
-		"1.0.168.192.in-addr.arpa":     false,
-		"ipv4only.arpa":                false,
+		"185.242.226.118":            true,
+		"8.8.8.8":                    true,
+		"192.168.1.20":               false, // private
+		"100.64.1.1":                 false, // CGNAT
+		"192.0.0.170":                false, // NAT64 discovery
+		"203.0.113.9":                false, // documentation
+		"2001:db8::1":                false, // documentation
+		"2606:4700:10::5":            false, // a LAN device's global IPv6
+		"93.184.216.34":              false, // public, but a LAN device's
+		"::ffff:192.168.1.20":        false,
+		"jssdk.juneworewyjyna.com":   true,
+		"mac":                        false, // single label
+		"printer.lan":                false,
+		"1.0.168.192.in-addr.arpa":   false,
+		"ipv4only.arpa":              false,
 		"ourdomain.example":          false, // ours
 		"jellyfin.ourdomain.example": false, // ours
 		"notourdomain.example":       true,
