@@ -21,6 +21,16 @@ Rows that carry an address or domain also carry what's known about it:
   "feeds"     those lists, as feed:<name>
   "asn", "as_owner", "country"   from iptoasn
 
+Rows with intel can also carry "queried": outside services' cached answers,
+  {"internetdb"|"abuseipdb"|"censys": {"found", "as_of", "facts"}}
+facts by provider: internetdb {ports, hostnames, cpes, tags, vulns};
+abuseipdb {score, reports, users, last_reported, usage, isp, domain, tor};
+censys hosts {services: [{port, protocol, software}], dns_names, asn,
+as_name, country, city, labels, threats, vulns, reputation, greynoise};
+censys domains {port, software, labels, threats, cert_names, cert_issuer}.
+They're context, never verdicts. /api/health has "lookups": each service's
+units used (24h, this month), cached answers and last error.
+
 Shared with the admin API (alerts and bans gain the fields above):
   /api/hits  /api/top  /api/dns  /api/dns/top  /api/alerts  /api/bans
   /api/trips  /api/trips/{id}

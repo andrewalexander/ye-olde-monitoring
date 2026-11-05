@@ -233,6 +233,9 @@ func TestKeysAndConfig(t *testing.T) {
 	if err != nil || keys[KeyAbuseIPDB] != "abc123" || keys[KeyCensys] != "tok" {
 		t.Errorf("keys: %v %v", len(keys), err)
 	}
+	if k, err := LoadKeys(filepath.Join(dir, "missing.env")); err != nil || len(k) != 0 {
+		t.Errorf("a missing key file should be no keys: %v %v", len(k), err)
+	}
 	if _, err := NewProvider("abuseipdb", ProviderLimits{}, map[string]string{}); err == nil ||
 		!strings.Contains(err.Error(), KeyAbuseIPDB) {
 		t.Errorf("missing key: %v", err)

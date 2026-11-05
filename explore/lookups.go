@@ -68,13 +68,17 @@ func LoadLookupsConfig(path string) (LookupsConfig, error) {
 }
 
 // LoadKeys reads KEY=value lines (comments and blank lines ignored). Values
-// are never printed.
+// are never printed. A missing file is no keys: providers that need one are
+// skipped, and keyless ones still run.
 func LoadKeys(path string) (map[string]string, error) {
 	keys := map[string]string{}
 	if path == "" {
 		return keys, nil
 	}
 	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return keys, nil
+	}
 	if err != nil {
 		return nil, err
 	}

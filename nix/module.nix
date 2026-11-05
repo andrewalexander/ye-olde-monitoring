@@ -248,11 +248,12 @@ in
         # Nix store.
         type = types.nullOr types.str;
         default = null;
-        example = "/var/lib/secrets/dnscount-lookups.env";
+        example = "/var/lib/dnscount/lookups.env";
         description = ''
           KEY=value file with ABUSE_IPDB_KEY and CENSYS_TOKEN, outside the Nix
-          store, readable by the dnscount group (mode 0640, root:dnscount). A
-          provider whose key is missing is skipped.
+          store, readable by the dnscount user: mode 0640, root:dnscount, in a
+          directory it can enter (/var/lib/dnscount is; a root-only
+          /var/lib/secrets isn't). Missing: only keyless providers run.
         '';
       };
       neverLookup = mkOption {

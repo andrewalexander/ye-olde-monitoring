@@ -6,7 +6,7 @@ result-*
 *.db-*
 .DS_Store
 # Local API keys (AbuseIPDB, Censys). Never committed; on the server they live
-# in /var/lib/secrets/dnscount-lookups.env (see docs/homelab.md).
+# in /var/lib/dnscount/lookups.env (see docs/homelab.md).
 secrets.env
 *.env
 !deploy/dnscount.env.example
