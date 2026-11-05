@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"dnscount/hit"
-	"dnscount/ingest"
-	"dnscount/store"
+	"github.com/andrewalexander/ye-olde-monitoring/hit"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
 )
 
 func TestTailFollowsRotation(t *testing.T) {

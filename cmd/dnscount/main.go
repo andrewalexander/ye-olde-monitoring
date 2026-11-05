@@ -28,17 +28,17 @@ import (
 	"syscall"
 	"time"
 
-	"dnscount/forensics"
-	"dnscount/hit"
-	"dnscount/ingest"
-	"dnscount/ingest/dns"
-	"dnscount/ingest/f2b"
-	"dnscount/ingest/fw"
-	"dnscount/ingest/ids"
-	"dnscount/ingest/lan"
-	"dnscount/ingest/syslog"
-	"dnscount/server"
-	"dnscount/store"
+	"github.com/andrewalexander/ye-olde-monitoring/hit"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/forensics"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/dns"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/f2b"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/fw"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/ids"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/lan"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/syslog"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/server"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
 )
 
 const usage = `usage: dnscount <command> [flags]

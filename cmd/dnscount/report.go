@@ -12,7 +12,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"dnscount/store"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
 )
 
 const reportUsage = `usage:

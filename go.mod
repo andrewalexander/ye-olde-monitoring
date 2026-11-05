@@ -1,4 +1,4 @@
-module dnscount
+module github.com/andrewalexander/ye-olde-monitoring
 
 go 1.27.1
 

@@ -12,8 +12,8 @@ import (
 	"log"
 	"net/http"
 
-	"dnscount/middleware"
-	"dnscount/store"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
+	"github.com/andrewalexander/ye-olde-monitoring/middleware"
 )
 
 func main() {

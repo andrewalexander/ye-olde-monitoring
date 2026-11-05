@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"dnscount/store"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
 )
 
 // backup writes a timestamped copy of the database into a directory and

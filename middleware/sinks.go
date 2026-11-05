@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"dnscount/hit"
-	"dnscount/store"
+	"github.com/andrewalexander/ye-olde-monitoring/hit"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
 )
 
 // Sinks buffer hits and write them in batches from a background goroutine.

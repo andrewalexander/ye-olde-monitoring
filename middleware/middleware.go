@@ -12,7 +12,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"dnscount/hit"
+	"github.com/andrewalexander/ye-olde-monitoring/hit"
 )
 
 // Sink receives hits. Record must never block the request.

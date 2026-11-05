@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"dnscount/enrich"
-	"dnscount/explore"
-	"dnscount/store"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/enrich"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/explore"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
 )
 
 func defaultEnrichDB(db, flagVal string) string {

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"dnscount/hit"
-	"dnscount/store"
+	"github.com/andrewalexander/ye-olde-monitoring/hit"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
 )
 
 type memSink struct {
