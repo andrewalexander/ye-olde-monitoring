@@ -1,0 +1,1 @@
+{"result":{"extensions":{},"resource":{"hostname":"jssdk.juneworewyjyna.com","port":443,"scan_time":"2026-11-04T10:00:00Z","software":[{"product":"cloudflare"}],"labels":[{"value":"PHISHING"}],"cert":{"names":["*.juneworewyjyna.com","juneworewyjyna.com"],"parsed":{"subject":{"common_name":["juneworewyjyna.com"]},"issuer":{"organization":["Let's Encrypt"]}}}}}}
