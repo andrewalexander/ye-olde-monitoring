@@ -52,7 +52,7 @@ commands:
   report         hits | dns | alerts | bans | flagged | trips | trip <id>
   check          run data sanity checks
   backup         write a timestamped copy of the database to a directory
-  explore        LAN table explorer: a separate, read-only process (see docs/homelab.md)
+  explore        LAN table explorer: a separate, read-only process (see README.md)
   feeds          update | list: download the free threat feeds and IP-to-ASN table
   enrich         one pass of matching indicators against the feeds (the explorer does this itself)
 

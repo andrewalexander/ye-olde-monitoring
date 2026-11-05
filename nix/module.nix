@@ -70,6 +70,8 @@ let
     ];
 in
 {
+  imports = [ ./guard.nix ];
+
   options.services.dnscount = {
     enable = mkEnableOption "dnscount (counter, /ingest and the admin API)";
 
@@ -179,7 +181,7 @@ in
       enable = mkEnableOption ''
         the explorer: a separate, low-priority process serving the LAN table UI
         and its API from a read-only view of the database, with free threat
-        feeds matched locally (see docs/homelab.md)
+        feeds matched locally (see README.md)
       '';
       addr = mkOption {
         type = types.str;

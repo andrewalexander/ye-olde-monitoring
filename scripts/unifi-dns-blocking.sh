@@ -1,7 +1,7 @@
 #!/bin/sh
 # DNS query logging and ad blocking in a UniFi OS gateway's own dnsmasq, using
 # HaGeZi's lists. Replaces scripts/unifi-enable-dns-log.sh and UniFi's Ad
-# Blocking, which hides the real client from dnsmasq's log (see docs/homelab.md).
+# Blocking, which hides the real client from dnsmasq's log (see README.md).
 #
 # Run it on the router; run it again to change the lists or upgrade:
 #   ssh root@<router> 'sh -s' < scripts/unifi-dns-blocking.sh

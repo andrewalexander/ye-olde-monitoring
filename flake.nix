@@ -1,5 +1,5 @@
 {
-  description = "dnscount: hit counter and request/DNS logger backed by one SQLite file";
+  description = "ye-olde-monitoring: watch what connects to the things you expose, and what your network looks up";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -16,19 +16,19 @@
       });
 
       # In a host's flake:
-      #   inputs.dnscount.url = "github:<you>/dnscount";   (or path:/...)
-      #   modules = [ dnscount.nixosModules.default { services.dnscount.enable = true; } ];
+      #   inputs.monitoring.url = "github:andrewalexander/ye-olde-monitoring";
+      #   modules = [ monitoring.nixosModules.default { services.dnscount.enable = true; } ];
+      # services.dnscount, plus services.dnscount.guard (fail2ban over Caddy's log).
       nixosModules.default = { lib, pkgs, ... }: {
         imports = [ ./nix/module.nix ];
         services.dnscount.package =
           lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.dnscount;
       };
 
-      # Boots a VM (needs KVM): nix build .#checks.x86_64-linux.module
+      # Boot VMs (need KVM): nix build .#checks.x86_64-linux.module
       checks = nixpkgs.lib.genAttrs linux (system: {
         module = nixpkgs.legacyPackages.${system}.testers.runNixOSTest (import ./nix/test.nix self);
-        vpn = nixpkgs.legacyPackages.${system}.testers.runNixOSTest ./nix/test-vpn.nix;
-        media = nixpkgs.legacyPackages.${system}.testers.runNixOSTest ./nix/test-media.nix;
+        guard = nixpkgs.legacyPackages.${system}.testers.runNixOSTest (import ./nix/test-guard.nix self);
       });
     };
 }

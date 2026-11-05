@@ -41,7 +41,7 @@ example.com {
 # --- Jellyfin (or any app that puts credentials in URLs) -------------------
 # Same log as above, but filtered so tokens never reach disk. dnscount also
 # redacts api_key/token/... in query strings and referers when it stores hits.
-# NixOS: deploy/nixos/media.nix has this, plus a LAN-only :8096 for Roku.
+# NixOS: services.dnscount.caddyLog.format is this block (see ye-olde-jellyfin for a full site).
 #
 # jellyfin.example.com {
 # 	log {

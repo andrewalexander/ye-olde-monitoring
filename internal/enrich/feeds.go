@@ -73,7 +73,7 @@ func (f Feed) File(dir string) string {
 
 // Builtin is the default feed list: free, no account needed. abuse.ch's
 // URLhaus and ThreatFox exports now need a free Auth-Key in the URL; add them
-// with -feeds-file once you have one (see docs/homelab.md).
+// with -feeds-file once you have one (see README.md).
 var Builtin = []Feed{
 	{Name: "feodo", URL: "https://feodotracker.abuse.ch/downloads/ipblocklist.txt", Kind: "ip", Format: "plain",
 		Verdict: Malicious, Interval: time.Hour, About: "abuse.ch Feodo Tracker: botnet C2 servers"},
