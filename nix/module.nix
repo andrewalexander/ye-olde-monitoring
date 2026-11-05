@@ -276,7 +276,7 @@ in
         description = ''
           Caps per provider, over the defaults: internetdb 500 a day and 7 days
           before re-asking; abuseipdb 800 a day (of the free 1,000), 7 days;
-          censys 5 a day and 100 a month, 30 days.
+          censys 100 a month and at most 25 a day, 30 days.
         '';
       };
     };

@@ -37,8 +37,9 @@ var DefaultLimits = map[string]ProviderLimits{
 	"internetdb": {Daily: 500, TTL: "168h"},
 	// 1,000 checks a day on a free account; leave room for anything manual.
 	"abuseipdb": {Daily: 800, TTL: "168h"},
-	// 100 credits a month plus 5 free actions a day on a free account.
-	"censys": {Daily: 5, Monthly: 100, TTL: "720h"},
+	// 100 credits a month on a free account: that's the real cap. The daily
+	// one only paces, so one run can't spend the whole month.
+	"censys": {Daily: 25, Monthly: 100, TTL: "720h"},
 }
 
 // LoadLookupsConfig reads path (empty: defaults only).
