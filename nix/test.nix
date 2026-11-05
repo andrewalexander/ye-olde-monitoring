@@ -19,8 +19,21 @@ self:
           "tor-exits" "openphish" "stevenblack" "iptoasn" ];
         feeds.extra.vmbad = { url = "/etc/dnscount-vm-bad.txt"; interval = "1m"; };
       };
+      # Outside services, faked: a local InternetDB that knows one address.
+      lookups = {
+        enable = true;
+        automatic = [ "internetdb" ];
+        providers.internetdb.base = "http://127.0.0.1:9911";
+        neverLookup = [ "ourname.test" ];
+      };
     };
     environment.etc."dnscount-vm-bad.txt".text = "203.0.113.66\n";
+    systemd.services.fake-internetdb = {
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 -m http.server 9911 --bind 127.0.0.1 --directory ${
+        pkgs.writeTextDir "8.8.4.4" ''{"cpes":[],"hostnames":["dns.google"],"ip":"8.8.4.4","ports":[53,443],"tags":[],"vulns":[]}''
+      }";
+    };
     environment.systemPackages = [ pkgs.curl pkgs.netcat pkgs.jq ];
   };
 
@@ -77,6 +90,32 @@ self:
     machine.succeed("curl -fsS http://127.0.0.1:8090/api/health | jq -e '.breakers | length == 2'")
     score = float(machine.succeed("systemd-analyze security dnscount-explore.service --no-pager | tail -1 | grep -oE '[0-9]+\\.[0-9]+'").strip())
     assert score <= 3.0, score
+
+    # Outside services: an IPS alert from a public address makes it worth
+    # asking about; the hourly unit asks the (fake) InternetDB, and the
+    # explorer shows the answer. The VM's documentation addresses are never
+    # sent (the privacy gate refuses them).
+    machine.wait_for_unit("fake-internetdb.service")
+    machine.wait_for_open_port(9911)
+    stamp = machine.succeed("date -u '+%b %d %H:%M:%S'").strip()
+    machine.succeed(
+        f"echo '<14>{stamp} router CEF:0|Ubiquiti|UniFi Network|10.0|545|Threat Detected and Blocked|7|"
+        "src=8.8.4.4 spt=5000 dpt=443 proto=TCP UNIFIipsSignature=ET SCAN vm lookup UNIFIipsSignatureId=1'"
+        " | nc -u -w1 127.0.0.1 5514"
+    )
+    machine.wait_until_succeeds("dnscount-admin report alerts | grep -q 8.8.4.4")
+    out = machine.succeed("dnscount-admin enrich -provider internetdb -dry-run -since 10000h")
+    print(out)
+    asked = out.split("internetdb:")[1]
+    assert "8.8.4.4" in asked and "203.0.113" not in asked, out
+    machine.succeed("systemctl start dnscount-lookups.service")
+    machine.succeed(
+        "curl -fsS 'http://127.0.0.1:8090/api/ip/8.8.4.4' | jq -e '.intel.queried.internetdb.found == true'"
+    )
+    machine.succeed("curl -fsS http://127.0.0.1:8090/api/health | jq -e '.lookups[0].provider == \"internetdb\"'")
+    # Run again: cached, nothing re-asked.
+    machine.succeed("systemctl start dnscount-lookups.service")
+    machine.succeed("curl -fsS http://127.0.0.1:8090/api/health | jq -e '.lookups[0].units_24h == 1'")
 
     machine.succeed("systemctl start dnscount-backup.service")
     machine.succeed("ls /var/lib/dnscount/backups | grep -q .")

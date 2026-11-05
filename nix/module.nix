@@ -49,6 +49,18 @@ let
     (lib.filterAttrs (_: j: builtins.isAttrs j && (j.settings or { }) ? port) config.services.fail2ban.jails));
   syslogListen = "udp://${cfg.syslog.address}:${toString cfg.syslog.port}";
 
+  # The lookups config: caps, which providers run on their own, our own domains.
+  lookupsConfig = pkgs.writeText "dnscount-lookups.json" (builtins.toJSON {
+    never = cfg.lookups.neverLookup;
+    automatic = cfg.lookups.automatic;
+    providers = lib.mapAttrs (_: c: lib.filterAttrs (_: v: v != null) c) cfg.lookups.providers;
+  });
+  # What dnscount-admin and dnscount-lookups both see.
+  lookupsEnv = lib.optionalString cfg.lookups.enable (
+    "DNSCOUNT_LOOKUPS_CONFIG=${lookupsConfig}"
+    + lib.optionalString (cfg.lookups.keyFile != null) " DNSCOUNT_KEY_FILE=${cfg.lookups.keyFile}"
+  );
+
   # Feed flags shared by the explorer and the downloader.
   feedArgs = lib.optionals (cfg.explore.feeds.disable != [ ]) [ "-feeds-disable" (concatStringsSep "," cfg.explore.feeds.disable) ]
     ++ lib.optionals (cfg.explore.feeds.extra != { }) [
@@ -218,6 +230,56 @@ in
       };
     };
 
+    lookups = {
+      enable = mkEnableOption ''
+        asking outside services about flagged, banned and alerting addresses (and
+        flagged domains): Shodan InternetDB and AbuseIPDB hourly, on their own,
+        within their caps; Censys only when you run
+        `dnscount-admin enrich -provider censys`. Answers are cached in the
+        explorer's enrichment store. Nothing describing the LAN is ever sent
+      '';
+      automatic = mkOption {
+        type = types.listOf (types.enum [ "internetdb" "abuseipdb" ]);
+        default = [ "internetdb" "abuseipdb" ];
+        description = "Providers the hourly run asks. Censys is never automatic: it spends credits.";
+      };
+      keyFile = mkOption {
+        # A string, not a path: a path would be copied into the world-readable
+        # Nix store.
+        type = types.nullOr types.str;
+        default = null;
+        example = "/var/lib/secrets/dnscount-lookups.env";
+        description = ''
+          KEY=value file with ABUSE_IPDB_KEY and CENSYS_TOKEN, outside the Nix
+          store, readable by the dnscount group (mode 0640, root:dnscount). A
+          provider whose key is missing is skipped.
+        '';
+      };
+      neverLookup = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "example.com" ];
+        description = "Our own domains (and their subdomains): never sent to any provider.";
+      };
+      providers = mkOption {
+        type = types.attrsOf (types.submodule {
+          options = {
+            daily = mkOption { type = types.nullOr types.ints.unsigned; default = null; description = "Units in any 24 hours."; };
+            monthly = mkOption { type = types.nullOr types.ints.unsigned; default = null; description = "Units this calendar month (UTC)."; };
+            ttl = mkOption { type = types.nullOr types.str; default = null; example = "168h"; description = "Re-ask after this long."; };
+            base = mkOption { type = types.nullOr types.str; default = null; description = "API base URL (for tests)."; };
+          };
+        });
+        default = { };
+        example = lib.literalExpression ''{ censys.monthly = 50; }'';
+        description = ''
+          Caps per provider, over the defaults: internetdb 500 a day and 7 days
+          before re-asking; abuseipdb 800 a day (of the free 1,000), 7 days;
+          censys 5 a day and 100 a month, 30 days.
+        '';
+      };
+    };
+
     backup = {
       enable = mkOption {
         type = types.bool;
@@ -250,7 +312,7 @@ in
     environment.systemPackages = [
       cfg.package
       (pkgs.writeShellScriptBin "dnscount-admin" ''
-        exec /run/wrappers/bin/sudo -u dnscount ${pkgs.coreutils}/bin/env DNSCOUNT_DB=${db} ${bin} "$@"
+        exec /run/wrappers/bin/sudo -u dnscount ${pkgs.coreutils}/bin/env DNSCOUNT_DB=${db} ${lookupsEnv} ${bin} "$@"
       '')
     ];
 
@@ -355,6 +417,34 @@ in
     };
 
     # Downloads only the feeds that are due; opens no database.
+    # Asks the automatic providers about newly relevant addresses, within their
+    # caps. It connects out (to the providers), so it's its own unit; the
+    # explorer never does.
+    systemd.services.dnscount-lookups = mkIf (cfg.explore.enable && cfg.lookups.enable) {
+      description = "dnscount: ask outside services (InternetDB, AbuseIPDB) about flagged addresses";
+      wants = [ "network-online.target" ];
+      after = [ "network-online.target" "dnscount-explore.service" ];
+      environment = {
+        DNSCOUNT_DB = db;
+        DNSCOUNT_LOOKUPS_CONFIG = "${lookupsConfig}";
+      } // lib.optionalAttrs (cfg.lookups.keyFile != null) { DNSCOUNT_KEY_FILE = cfg.lookups.keyFile; };
+      serviceConfig = hardening // network // {
+        Type = "oneshot";
+        ExecStart = "${bin} enrich -auto";
+        Nice = 10;
+        IOSchedulingClass = "idle";
+      };
+    };
+    systemd.timers.dnscount-lookups = mkIf (cfg.explore.enable && cfg.lookups.enable) {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "10m";
+        OnCalendar = "hourly";
+        RandomizedDelaySec = "10m";
+        Persistent = true;
+      };
+    };
+
     systemd.services.dnscount-feeds = mkIf (cfg.explore.enable && cfg.explore.feeds.enable) {
       description = "dnscount: download threat feeds and the IP-to-ASN table";
       wants = [ "network-online.target" ];
