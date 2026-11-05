@@ -305,7 +305,7 @@ func (x *Explorer) overview(st *store.Store) (map[string]any, error) {
 	// Flagged as the Flagged view counts it: listed malicious or suspicious,
 	// not a LAN device, not a reserved address.
 	rows, err := st.DB().QueryContext(st.Context(), `SELECT DISTINCT indicator FROM enrich.enrichment
-		WHERE listed = 1 AND verdict IN ('malicious','suspicious')
+		WHERE current = 1 AND method = 'downloaded' AND verdict IN ('malicious','suspicious')
 		AND indicator NOT IN (SELECT ip FROM enrich.lan_clients)`)
 	if err != nil {
 		return nil, err

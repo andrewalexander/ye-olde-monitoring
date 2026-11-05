@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"bytes"
+	"database/sql"
 	"compress/gzip"
 	"context"
 	"path/filepath"
@@ -124,8 +125,8 @@ func TestReadOnlyNeverWrites(t *testing.T) {
 
 func enrichmentRow(t *testing.T, st *store.Store, provider, ind string) (listed bool, first, removed, detail, version string, ok bool) {
 	t.Helper()
-	err := st.DB().QueryRow(`SELECT listed, first_listed, removed_at, detail, list_version FROM enrichment
-		WHERE provider = ? AND indicator = ?`, provider, ind).Scan(&listed, &first, &removed, &detail, &version)
+	err := st.DB().QueryRow(`SELECT current, first_seen, ended_at, coalesce(json_extract(facts, '$.detail'), ''), version
+		FROM enrichment WHERE provider = ? AND indicator = ?`, provider, ind).Scan(&listed, &first, &removed, &detail, &version)
 	return listed, first, removed, detail, version, err == nil
 }
 
@@ -419,5 +420,76 @@ func TestIndexVersionRereads(t *testing.T) {
 	}
 	if after := snapshot(); after != before {
 		t.Errorf("re-reading changed the index:\n%s\nvs\n%s", before, after)
+	}
+}
+
+// An explore.db made before enrichment became one store for every provider
+// (its table only held list matches) is switched over on open: the old rows
+// are dropped, and re-matching refills the same matches into the new table.
+func TestEnrichmentSwitchFromListOnlyTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "explore.db")
+	old, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`CREATE TABLE indicators (indicator TEXT PRIMARY KEY, kind TEXT NOT NULL, first_seen TEXT NOT NULL,
+			last_seen TEXT NOT NULL, roles INTEGER NOT NULL DEFAULT 0, checked_at TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE enrichment (provider TEXT NOT NULL, indicator TEXT NOT NULL, kind TEXT NOT NULL,
+			verdict TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', matched_via TEXT NOT NULL DEFAULT '',
+			listed INTEGER NOT NULL, first_listed TEXT NOT NULL, last_listed TEXT NOT NULL,
+			removed_at TEXT NOT NULL DEFAULT '', list_version TEXT NOT NULL, PRIMARY KEY (provider, indicator))`,
+		`CREATE TABLE feed_versions (provider TEXT PRIMARY KEY, version TEXT NOT NULL, loaded_at TEXT NOT NULL, entries INTEGER NOT NULL)`,
+		`INSERT INTO indicators VALUES ('203.0.113.66', 'ip', '2026-10-27T15:00:00.000000000Z', '2026-10-27T15:00:00.000000000Z', 32, '2026-10-28T00:00:00.000000000Z')`,
+		`INSERT INTO enrichment VALUES ('feed:bad', '203.0.113.66', 'ip', 'malicious', '', '203.0.113.66', 1,
+			'2026-10-28T00:00:00.000000000Z', '2026-10-28T00:00:00.000000000Z', '', 'v1')`,
+		`INSERT INTO feed_versions VALUES ('feed:bad', 'v1', '2026-10-28T00:00:00.000000000Z', 1)`,
+		`INSERT INTO feed_versions VALUES ('asn:iptoasn', 'a1', '2026-10-28T00:00:00.000000000Z', 1)`,
+	} {
+		if _, err := old.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	old.Close()
+
+	st, err := store.OpenEnrich(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var n int
+	st.DB().QueryRow(`SELECT count(*) FROM enrichment`).Scan(&n)
+	if n != 0 {
+		t.Errorf("old list rows kept: %d", n)
+	}
+	if v, _ := st.FeedVersion("feed:bad"); v != "" {
+		t.Errorf("list version kept (%q): the list wouldn't be reconciled again", v)
+	}
+	if v, _ := st.FeedVersion("asn:iptoasn"); v != "a1" {
+		t.Errorf("ASN version lost: %q", v)
+	}
+	// Re-matching puts the same match back, in the new shape.
+	bad := list(t, "bad", "plain", enrich.Malicious, "203.0.113.66\n")
+	if _, err := st.MatchNew(store.Lists{Lists: []*enrich.List{bad}}, now); err != nil {
+		t.Fatal(err)
+	}
+	var method, verdict, facts string
+	var current bool
+	if err := st.DB().QueryRow(`SELECT method, verdict, current, facts FROM enrichment WHERE provider = 'feed:bad'
+		AND indicator = '203.0.113.66'`).Scan(&method, &verdict, &current, &facts); err != nil {
+		t.Fatal(err)
+	}
+	if method != "downloaded" || verdict != enrich.Malicious || !current || facts != `{"matched_via":"203.0.113.66"}` {
+		t.Errorf("rematched row: %s %s %v %s", method, verdict, current, facts)
+	}
+	// Opening again changes nothing.
+	st2, err := store.OpenEnrich(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st2.DB().QueryRow(`SELECT count(*) FROM enrichment`).Scan(&n)
+	st2.Close()
+	if n != 1 {
+		t.Errorf("second open dropped rows: %d", n)
 	}
 }

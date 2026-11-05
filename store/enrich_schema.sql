@@ -30,23 +30,51 @@ CREATE TABLE IF NOT EXISTS cursors (
 	last_id INTEGER NOT NULL
 );
 
--- One row per indicator per list: its current state on that list.
+-- Everything known about an indicator, one row per provider: "provider X
+-- says Y about it, as of Z". Every column means the same for every provider;
+-- what the provider said is in facts, as JSON labelled by provider.
+--   method     downloaded (a list or table we fetch whole and match locally)
+--              | queried (a service we ask per indicator; the row is its cache)
+--   verdict    the provider's own judgement, if it gives one
+--   current    1 = the provider says something about it now (on the list;
+--              the last answer found it)
+--   first_seen, last_seen   when it first / last said so
+--   ended_at   when it stopped (left the list; a refresh found nothing)
+--   version    which state of the provider's data this reflects (the list
+--              file's hash; the fetch time)
+--   raw        the full answer, for queried providers
+-- Downloaded rows can be rebuilt for free; queried rows cost quota to get
+-- again, so only downloaded rows are ever dropped (see store.OpenEnrich).
 CREATE TABLE IF NOT EXISTS enrichment (
-	provider     TEXT    NOT NULL, -- feed:<name>
-	indicator    TEXT    NOT NULL,
-	kind         TEXT    NOT NULL,
-	verdict      TEXT    NOT NULL, -- malicious | suspicious | info
-	detail       TEXT    NOT NULL DEFAULT '',
-	matched_via  TEXT    NOT NULL DEFAULT '', -- the listed IP, CIDR or parent domain
-	listed       INTEGER NOT NULL,            -- 1 = on the list now
-	first_listed TEXT    NOT NULL,
-	last_listed  TEXT    NOT NULL,
-	removed_at   TEXT    NOT NULL DEFAULT '',
-	list_version TEXT    NOT NULL,
+	provider   TEXT    NOT NULL,
+	indicator  TEXT    NOT NULL,
+	kind       TEXT    NOT NULL, -- ip | domain
+	method     TEXT    NOT NULL, -- downloaded | queried
+	verdict    TEXT    NOT NULL DEFAULT '',
+	current    INTEGER NOT NULL,
+	first_seen TEXT    NOT NULL,
+	last_seen  TEXT    NOT NULL,
+	ended_at   TEXT    NOT NULL DEFAULT '',
+	version    TEXT    NOT NULL,
+	facts      TEXT    NOT NULL DEFAULT '{}',
+	raw        TEXT    NOT NULL DEFAULT '',
 	PRIMARY KEY (provider, indicator)
 );
 CREATE INDEX IF NOT EXISTS enrichment_indicator ON enrichment(indicator);
-CREATE INDEX IF NOT EXISTS enrichment_listed ON enrichment(listed, verdict);
+CREATE INDEX IF NOT EXISTS enrichment_current ON enrichment(current, method, verdict);
+
+-- Every request sent to a queried provider: what left the box, when, and
+-- what it cost. Budgets are counted from here. Not enrichment data.
+CREATE TABLE IF NOT EXISTS lookup_requests (
+	id        INTEGER PRIMARY KEY,
+	provider  TEXT    NOT NULL,
+	indicator TEXT    NOT NULL, -- or several, comma-separated, for a batch
+	ts        TEXT    NOT NULL,
+	status    TEXT    NOT NULL, -- ok | not_found | error | HTTP status
+	units     INTEGER NOT NULL DEFAULT 1, -- credits or quota used
+	error     TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS lookup_requests_ts ON lookup_requests(provider, ts);
 
 -- The version of each list last reconciled.
 CREATE TABLE IF NOT EXISTS feed_versions (

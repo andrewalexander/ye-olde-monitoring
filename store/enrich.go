@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -188,14 +189,31 @@ type ReconcileStats struct {
 	Checked, Listed, Added, Removed int
 }
 
-const upsertMatch = `INSERT INTO enrichment (provider, indicator, kind, verdict, detail, matched_via, listed,
-		first_listed, last_listed, removed_at, list_version) VALUES (?,?,?,?,?,?,1,?,?,'',?)
-	ON CONFLICT(provider, indicator) DO UPDATE SET verdict = excluded.verdict, detail = excluded.detail,
-		matched_via = excluded.matched_via, listed = 1, last_listed = excluded.last_listed, removed_at = '',
-		list_version = excluded.list_version`
+// upsertMatch records a list match: args provider, indicator, kind, verdict,
+// now, now, list version, facts (listFacts).
+const upsertMatch = `INSERT INTO enrichment (provider, indicator, kind, method, verdict, current,
+		first_seen, last_seen, ended_at, version, facts) VALUES (?,?,?,'downloaded',?,1,?,?,'',?,?)
+	ON CONFLICT(provider, indicator) DO UPDATE SET verdict = excluded.verdict, facts = excluded.facts,
+		current = 1, last_seen = excluded.last_seen, ended_at = '', version = excluded.version`
 
-const markUnlisted = `UPDATE enrichment SET removed_at = CASE WHEN listed = 1 THEN ? ELSE removed_at END,
-		listed = 0, list_version = ? WHERE provider = ? AND indicator = ?`
+// markUnlisted records that a list no longer has an indicator: args now,
+// list version, provider, indicator.
+const markUnlisted = `UPDATE enrichment SET ended_at = CASE WHEN current = 1 THEN ? ELSE ended_at END,
+		current = 0, version = ? WHERE provider = ? AND indicator = ?`
+
+// listFacts is what a list says about a match: through which listed IP, CIDR
+// or parent domain, and the list's own note for it (e.g. a Spamhaus SBL id).
+func listFacts(via, detail string) string {
+	m := map[string]string{}
+	if via != "" {
+		m["matched_via"] = via
+	}
+	if detail != "" {
+		m["detail"] = detail
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
 
 type windowInd struct {
 	ind, kind string
@@ -204,7 +222,7 @@ type windowInd struct {
 
 // Reconcile re-checks every indicator seen since `since` against one list's
 // current contents: new matches are added, rows still matched are refreshed,
-// and rows no longer matched are marked removed (kept, with removed_at).
+// and rows no longer matched are marked ended (kept, with ended_at).
 // Rows for indicators older than the window keep the version they were
 // checked against. s is the explorer's own database.
 func (s *Store) Reconcile(l *enrich.List, since, now time.Time) (ReconcileStats, error) {
@@ -244,11 +262,11 @@ func (s *Store) Reconcile(l *enrich.List, since, now time.Time) (ReconcileStats,
 			if !w.hasRow {
 				st.Added++
 			}
-			if _, err := tx.Exec(upsertMatch, prov, w.ind, w.kind, l.Verdict, det, via, ts, ts, l.Version); err != nil {
+			if _, err := tx.Exec(upsertMatch, prov, w.ind, w.kind, l.Verdict, ts, ts, l.Version, listFacts(via, det)); err != nil {
 				return st, err
 			}
 		case w.hasRow:
-			res, err := tx.Exec(markUnlisted+` AND (listed = 1 OR list_version != ?)`, ts, l.Version, prov, w.ind, l.Version)
+			res, err := tx.Exec(markUnlisted+` AND (current = 1 OR version != ?)`, ts, l.Version, prov, w.ind, l.Version)
 			if err != nil {
 				return st, err
 			}
@@ -346,7 +364,7 @@ func matchOne(tx *sql.Tx, ind, kind string, ls Lists, now time.Time) error {
 	ts := fmtTime(now)
 	for _, l := range ls.Lists {
 		if via, det, ok := l.Match(ind); ok {
-			if _, err := tx.Exec(upsertMatch, l.Provider(), ind, kind, l.Verdict, det, via, ts, ts, l.Version); err != nil {
+			if _, err := tx.Exec(upsertMatch, l.Provider(), ind, kind, l.Verdict, ts, ts, l.Version, listFacts(via, det)); err != nil {
 				return err
 			}
 		} else if _, err := tx.Exec(markUnlisted, ts, l.Version, l.Provider(), ind); err != nil {
@@ -432,7 +450,7 @@ func (s *Store) OutdatedRows(since time.Time) (map[string]int64, error) {
 	rows, err := s.query(`SELECT e.provider, count(*) FROM enrichment e
 		JOIN feed_versions v ON v.provider = e.provider
 		JOIN indicators i ON i.indicator = e.indicator
-		WHERE e.list_version != v.version AND i.last_seen >= ? GROUP BY e.provider`, fmtTime(since))
+		WHERE e.method = 'downloaded' AND e.version != v.version AND i.last_seen >= ? GROUP BY e.provider`, fmtTime(since))
 	if err != nil {
 		return nil, err
 	}
@@ -503,13 +521,16 @@ func (s *Store) Intel(inds []string, history bool) (map[string]*Intel, error) {
 			args[i] = v
 		}
 		in := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
-		listed := ` AND listed = 1`
+		current := ` AND current = 1`
 		if history {
-			listed = ``
+			current = ``
 		}
-		rows, err := s.query(`SELECT indicator, provider, verdict, detail, matched_via, listed, first_listed,
-			last_listed, removed_at FROM enrich.enrichment WHERE indicator IN (`+in+`)`+listed+`
-			ORDER BY indicator, listed DESC, provider`, args...)
+		// Lists only here: they give verdicts and "on lists". Queried providers'
+		// rows are context, read by lookupIntel.
+		rows, err := s.query(`SELECT indicator, provider, verdict, coalesce(json_extract(facts, '$.detail'), ''),
+			coalesce(json_extract(facts, '$.matched_via'), ''), current, first_seen, last_seen, ended_at
+			FROM enrich.enrichment WHERE method = 'downloaded' AND indicator IN (`+in+`)`+current+`
+			ORDER BY indicator, current DESC, provider`, args...)
 		if err != nil {
 			return nil, err
 		}

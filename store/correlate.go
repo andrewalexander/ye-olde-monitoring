@@ -264,7 +264,7 @@ func (s *Store) firstSeenSince(kind string, since time.Time) (map[string]bool, e
 
 // listedDomains is every domain on a list now: domain -> worst verdict and feeds.
 func (s *Store) listedDomains() (map[string]*Intel, error) {
-	rows, err := s.query(`SELECT indicator, provider, verdict FROM enrich.enrichment WHERE listed = 1 AND kind = 'domain'`)
+	rows, err := s.query(`SELECT indicator, provider, verdict FROM enrich.enrichment WHERE current = 1 AND method = 'downloaded' AND kind = 'domain'`)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +301,7 @@ type AnswerIntel struct {
 func (s *Store) flaggedAnswers(since time.Time) (map[string]*AnswerIntel, error) {
 	rows, err := s.query(`SELECT r.domain, e.indicator, e.provider, e.verdict
 		FROM enrich.enrichment e CROSS JOIN dns_replies r ON r.answer = e.indicator
-		WHERE e.listed = 1 AND e.kind = 'ip' AND r.ts >= ?
+		WHERE e.current = 1 AND e.method = 'downloaded' AND e.kind = 'ip' AND r.ts >= ?
 		GROUP BY r.domain, e.indicator, e.provider`, fmtTime(since))
 	if err != nil {
 		return nil, err
@@ -627,7 +627,7 @@ func (s *Store) Flagged(q FlaggedQuery) ([]FlaggedRow, error) {
 		rows, err := s.query(`SELECT i.indicator, i.kind, i.roles, i.first_seen, i.last_seen,
 				max(CASE e.verdict WHEN 'malicious' THEN 3 WHEN 'suspicious' THEN 2 ELSE 1 END) AS rank
 			FROM enrich.enrichment e JOIN enrich.indicators i ON i.indicator = e.indicator
-			WHERE e.listed = 1 AND i.last_seen >= ? AND e.verdict IN (`+in+`)
+			WHERE e.current = 1 AND e.method = 'downloaded' AND i.last_seen >= ? AND e.verdict IN (`+in+`)
 			  AND i.indicator NOT IN (SELECT ip FROM enrich.lan_clients)
 			GROUP BY i.indicator`, append([]any{since}, listedArgs...)...)
 		if err != nil {

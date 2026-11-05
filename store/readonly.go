@@ -24,11 +24,42 @@ func OpenEnrich(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	if err := dropListOnlyEnrichment(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enrich migrate: %w", err)
+	}
 	if _, err := db.Exec(enrichSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("enrich schema: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+// dropListOnlyEnrichment replaces the first enrichment table, which only
+// held list matches (listed, removed_at, list_version...). Everything in it
+// was downloaded data, so it's dropped rather than converted: clearing the
+// list versions and the indicators' checked marks makes the explorer
+// reconcile every list and re-match every indicator into the new table.
+func dropListOnlyEnrichment(db *sql.DB) error {
+	old, err := hasColumn(db, "enrichment", "listed")
+	if err != nil || !old {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DROP TABLE enrichment`,
+		`DELETE FROM feed_versions WHERE provider LIKE 'feed:%'`,
+		`UPDATE indicators SET checked_at = ''`,
+	} {
+		if _, err := tx.Exec(q); err != nil {
+			return fmt.Errorf("%s: %w", q, err)
+		}
+	}
+	return tx.Commit()
 }
 
 // OpenReadOnly opens the live database for reading only, with enrichPath
