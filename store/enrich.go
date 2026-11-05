@@ -490,6 +490,9 @@ type Intel struct {
 	Verdict string `json:"verdict,omitempty"`
 	// Special is set for special-purpose addresses and names (RFC 6890).
 	Special *enrich.Special `json:"special,omitempty"`
+	// Lookups are queried providers' cached answers (internetdb, abuseipdb,
+	// censys): context, not verdicts.
+	Lookups map[string]*LookupFacts `json:"lookups,omitempty"`
 	// Bans30d is how many times fail2ban banned this address in the last 30
 	// days, all jails, not counting restores across restarts. That's the
 	// window it remembers for doubling repeat bans.
@@ -552,6 +555,33 @@ func (s *Store) Intel(inds []string, history bool) (map[string]*Intel, error) {
 			if history {
 				in.Matches = append(in.Matches, m)
 			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		// Queried providers' answers, as context.
+		rows, err = s.query(`SELECT indicator, provider, current, last_seen, facts FROM enrich.enrichment
+			WHERE method = 'queried' AND indicator IN (`+in+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var ind, prov, last, facts string
+			var lf LookupFacts
+			if err := rows.Scan(&ind, &prov, &lf.Found, &last, &facts); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			lf.AsOf = parseTime(last)
+			if lf.Found {
+				lf.Facts = json.RawMessage(facts)
+			}
+			in := get(ind)
+			if in.Lookups == nil {
+				in.Lookups = map[string]*LookupFacts{}
+			}
+			in.Lookups[prov] = &lf
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {

@@ -14,6 +14,7 @@ import (
 
 	"dnscount/enrich"
 	"dnscount/explore"
+	"dnscount/store"
 )
 
 func defaultEnrichDB(db, flagVal string) string {
@@ -87,16 +88,43 @@ func exploreCmd(args []string) error {
 	return x.Run(ctx, *addr)
 }
 
-// enrichCmd runs one pass of what the explorer does in the background:
-// reload changed feeds (reconciling them), index new rows, match.
+// enrichCmd fills the enrichment store. With no -provider, it runs one pass
+// of what the explorer does in the background: reload changed feeds
+// (reconciling them), index new rows, match. With -provider (or -auto), it
+// asks queried providers about the indicators worth asking about instead.
 func enrichCmd(args []string) error {
 	fs := flag.NewFlagSet("enrich", flag.ExitOnError)
 	db := dbFlag(fs)
 	enrichDB := fs.String("enrich-db", "", "the explorer's database (default: explore.db next to -db)")
 	full := fs.Bool("full", false, "reconcile every list, even unchanged ones")
 	all := fs.Bool("all", false, "with -full: re-check every indicator ever seen, not just the last 90 days")
+	rebuild := fs.Bool("rebuild-lists", false, "drop every list match and re-match from scratch (queried answers are kept)")
+	provider := fs.String("provider", "", "ask queried providers instead: internetdb,abuseipdb,censys")
+	auto := fs.Bool("auto", false, "ask the automatic providers (the lookups config; never censys), for the timer")
+	dryRun := fs.Bool("dry-run", false, "with -provider or -auto: print what would be asked and the cost; send nothing")
+	ips := fs.String("ip", "", "with -provider: also ask about these (comma-separated; still privacy-gated)")
+	limit := fs.Int("limit", 0, "with -provider: ask about at most this many per provider")
+	since := fs.Duration("since", 7*24*time.Hour, "with -provider: pick indicators seen this recently")
+	keyFile := fs.String("key-file", os.Getenv("DNSCOUNT_KEY_FILE"), "KEY=value file with "+explore.KeyAbuseIPDB+" and "+explore.KeyCensys)
+	lookupsConf := fs.String("lookups-config", os.Getenv("DNSCOUNT_LOOKUPS_CONFIG"), "JSON config: caps, automatic providers, our own domains")
 	ff := addFeedFlags(fs)
 	fs.Parse(args)
+	if *provider != "" || *auto {
+		return lookupCmd(defaultEnrichDB(*db, *enrichDB), *db, *provider, *auto, *dryRun, *ips, *limit, *since, *keyFile, *lookupsConf)
+	}
+	if *rebuild {
+		enr, err := store.OpenEnrich(defaultEnrichDB(*db, *enrichDB))
+		if err != nil {
+			return err
+		}
+		err = enr.RebuildLists()
+		enr.Close()
+		if err != nil {
+			return err
+		}
+		log.Printf("list matches dropped; re-matching")
+		*full = true
+	}
 	feeds, err := ff.load()
 	if err != nil {
 		return err
@@ -157,5 +185,71 @@ func feedsCmd(args []string) error {
 	x := &enrich.Fetcher{Dir: dir, Force: *force, Log: log.Printf}
 	changed, err := x.Update(context.Background(), feeds)
 	log.Printf("%d feed(s) changed", len(changed))
+	return err
+}
+
+// lookupCmd asks queried providers (enrich -provider / -auto).
+func lookupCmd(enrichPath, db, provider string, auto, dryRun bool, ips string, limit int, since time.Duration,
+	keyFile, confPath string) error {
+	conf, err := explore.LoadLookupsConfig(confPath)
+	if err != nil {
+		return err
+	}
+	keys, err := explore.LoadKeys(keyFile)
+	if err != nil {
+		return fmt.Errorf("key file: %w", err)
+	}
+	names := strings.Split(provider, ",")
+	if auto {
+		if provider != "" {
+			return fmt.Errorf("use -auto or -provider, not both")
+		}
+		names = conf.Automatic
+	}
+	var runs []explore.ProviderRun
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		if auto && n == "censys" {
+			log.Printf("censys is never automatic (it spends credits); run enrich -provider censys")
+			continue
+		}
+		p, err := explore.NewProvider(n, conf.Providers[n], keys)
+		if err != nil {
+			if !auto {
+				return err
+			}
+			log.Printf("skipping %s: %v", n, err)
+			continue
+		}
+		runs = append(runs, explore.ProviderRun{P: p, Limits: conf.Providers[n]})
+	}
+	if len(runs) == 0 {
+		log.Printf("no providers to ask")
+		return nil
+	}
+	enr, err := store.OpenEnrich(enrichPath)
+	if err != nil {
+		return err
+	}
+	defer enr.Close()
+	ro, err := store.OpenReadOnly(db, enrichPath, 2)
+	if err != nil {
+		return err
+	}
+	defer ro.Close()
+	var extra []string
+	for _, ip := range strings.Split(ips, ",") {
+		if ip = strings.TrimSpace(ip); ip != "" {
+			extra = append(extra, ip)
+		}
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	r := &explore.LookupRun{RO: ro, Enr: enr, Providers: runs, Never: conf.Never, Since: since, Extra: extra,
+		Limit: limit, DryRun: dryRun, Out: os.Stdout}
+	_, err = r.Run(ctx)
 	return err
 }

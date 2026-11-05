@@ -2,11 +2,18 @@ package main
 
 import (
 	"bufio"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"dnscount/hit"
+	"dnscount/ingest"
+	"dnscount/store"
 )
 
 func TestTailFollowsRotation(t *testing.T) {
@@ -91,5 +98,32 @@ func TestReportFlags(t *testing.T) {
 		case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
 			t.Errorf("%v: error = %v, want %q", tc.args, err, tc.wantErr)
 		}
+	}
+}
+
+// An automatic run never spends Censys credits, even if the config lists
+// Censys as automatic and a token is there.
+func TestAutoNeverCallsCensys(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+	dir := t.TempDir()
+	db := filepath.Join(dir, "dnscount.db")
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.InsertHits([]hit.Hit{{Hash: "h", TS: time.Now(), Site: "s", Source: "t", ClientIP: "185.242.226.118"}})
+	st.InsertBan(ingest.Ban{TS: time.Now(), Event: "ban", Jail: "j", IP: "185.242.226.118"})
+	st.Close()
+	conf := filepath.Join(dir, "lookups.json")
+	os.WriteFile(conf, []byte(`{"automatic":["censys"],"providers":{"censys":{"base":"`+srv.URL+`","daily":100}}}`), 0o600)
+	keys := filepath.Join(dir, "keys.env")
+	os.WriteFile(keys, []byte("CENSYS_TOKEN=tok\n"), 0o600)
+	if err := lookupCmd(filepath.Join(dir, "explore.db"), db, "", true, false, "", 0, 7*24*time.Hour, keys, conf); err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 0 {
+		t.Errorf("an automatic run called censys %d times", hits.Load())
 	}
 }
