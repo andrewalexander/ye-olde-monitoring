@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -491,5 +492,24 @@ func TestEnrichmentSwitchFromListOnlyTable(t *testing.T) {
 	st2.Close()
 	if n != 1 {
 		t.Errorf("second open dropped rows: %d", n)
+	}
+}
+
+// Rows that embed Intel keep their own fields and the providers' answers:
+// a Domains row's "lookups" (a count) must not hide the answers.
+func TestIntelJSONDoesNotCollide(t *testing.T) {
+	in := &store.Intel{Verdict: "malicious", Lookups: map[string]*store.LookupFacts{"censys": {Found: true}}}
+	b, err := json.Marshal(store.DomainRow{Domain: "x.example", Lookups: 7, Intel: in})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"lookups":7`, `"queried":{"censys":`, `"verdict":"malicious"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("%s missing from %s", want, b)
+		}
+	}
+	b, _ = json.Marshal(store.InboundIP{IP: "185.242.226.118", Intel: in})
+	if !strings.Contains(string(b), `"queried":{"censys":`) {
+		t.Errorf("inbound row: %s", b)
 	}
 }

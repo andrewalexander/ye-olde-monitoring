@@ -335,6 +335,11 @@ func (x *Explorer) health(ctx context.Context) (map[string]any, error) {
 		out["now"] = s
 	}
 	out["slow_queries"] = x.cfg.Sampler.Slow()
+	if u, err := x.ro.WithContext(ctx).LookupUsage("enrich.", x.cfg.Now()); err == nil {
+		out["lookups"] = u
+	} else {
+		out["lookups_error"] = err.Error()
+	}
 	feeds, err := x.feedStatus(ctx)
 	if err != nil {
 		return nil, err

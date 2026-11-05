@@ -492,7 +492,7 @@ type Intel struct {
 	Special *enrich.Special `json:"special,omitempty"`
 	// Lookups are queried providers' cached answers (internetdb, abuseipdb,
 	// censys): context, not verdicts.
-	Lookups map[string]*LookupFacts `json:"lookups,omitempty"`
+	Lookups map[string]*LookupFacts `json:"queried,omitempty"`
 	// Bans30d is how many times fail2ban banned this address in the last 30
 	// days, all jails, not counting restores across restarts. That's the
 	// window it remembers for doubling repeat bans.

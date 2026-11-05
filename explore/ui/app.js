@@ -152,6 +152,28 @@ function col(title, field, kind, extra) {
 }
 // How often fail2ban banned the address in the last 30 days (all jails, not
 // counting restores across restarts): the window it doubles repeat bans over.
+// Queried providers' columns: abuse score (AbuseIPDB) and open ports (InternetDB and Censys).
+function abuseCol() {
+  return col("Abuse score", "queried", "text", {
+    formatter: (c) => document.createTextNode(abuseText(c.getRow().getData())), headerFilter: false,
+    sorter: (a, b, ra, rb) => ((factsOf(ra.getData(), "abuseipdb") || {}).score ?? -1) - ((factsOf(rb.getData(), "abuseipdb") || {}).score ?? -1),
+    headerTooltip: "AbuseIPDB: how confident other admins' reports are that this address is abusive (context, not a verdict)",
+  });
+}
+function portsCol() {
+  return col("Ports", "queried", "text", {
+    formatter: (c) => document.createTextNode(portsText(c.getRow().getData())), headerFilter: "input", headerFilterPlaceholder: "filter",
+    headerFilterFunc: (t, v, row) => portsText(row).includes(t), sorter: (a, b, ra, rb) => portsText(ra.getData()).localeCompare(portsText(rb.getData())),
+    headerTooltip: "Open ports, from Shodan InternetDB and Censys",
+  });
+}
+function censysWebCol() {
+  return col("Censys", "queried", "text", {
+    formatter: (c) => document.createTextNode(censysWebText(c.getRow().getData())), headerFilter: false, sorter: undefined,
+    headerTooltip: "Censys web property on :443: labels, software, certificate issuer",
+  });
+}
+
 function bans30() {
   return col("Bans 30d", "bans_30d", "num", { headerTooltip: "Times fail2ban banned this address in the last 30 days, all jails, not counting restarts" });
 }
@@ -195,7 +217,7 @@ const LIST_VIEWS = {
       col("Verdict", "verdict", "verdict"), col("IP", "ip", "ip"), col("Feeds", "feeds", "tags"),
       col("AS", "asn", "text", { formatter: (c) => document.createTextNode(asnText(c.getRow().getData())) }),
       col("Owner", "as_owner"), col("CC", "country"),
-      col("Hits", "hits", "num"), col("4xx", "errors_4xx", "num"), col("Bans", "bans", "num"), bans30(),
+      col("Hits", "hits", "num"), col("4xx", "errors_4xx", "num"), col("Bans", "bans", "num"), bans30(), abuseCol(), portsCol(),
       col("Leaks", "leaks", "leak"), col("Alerts", "alerts_allowed", "num"), col("Blocked", "alerts_blocked", "num"),
       col("Trips", "trips", "num"), col("Sites", "sites", "list"), col("First", "first", "time"), col("Last", "last", "time"),
     ],
@@ -208,7 +230,7 @@ const LIST_VIEWS = {
       col("Verdict", "verdict", "verdict", { mutator: (v, d) => worst(v, d.answers && d.answers.verdict) }),
       col("Domain", "domain", "domain"), col("Feeds", "feeds", "tags"),
       col("Answer feeds", "answers", "tags", { formatter: (c) => tags((c.getValue() || {}).feeds), headerFilter: false, sorter: undefined }),
-      col("Lookups", "lookups", "num"), col("Clients", "clients", "num"), col("Blocked", "blocked", "num"),
+      col("Lookups", "lookups", "num"), col("Clients", "clients", "num"), col("Blocked", "blocked", "num"), censysWebCol(),
       col("New", "new", "bool"), col("First", "first", "time"), col("Last", "last", "time"),
     ],
   },
@@ -236,7 +258,7 @@ const LIST_VIEWS = {
       col("Kind", "kind"), col("Dir", "direction"), col("Feeds", "feeds", "tags"),
       col("AS", "asn", "text", { formatter: (c) => document.createTextNode(asnText(c.getRow().getData())) }),
       col("Owner", "as_owner"), col("CC", "country"),
-      col("Hits", "hits", "num"), col("Alerts", "alerts", "num"), col("Bans", "bans", "num"), bans30(),
+      col("Hits", "hits", "num"), col("Alerts", "alerts", "num"), col("Bans", "bans", "num"), bans30(), abuseCol(), portsCol(),
       col("LAN clients", "clients", "list", {
         formatter: (c) => el("span", { class: "tags" }, (c.getValue() || []).map(clientLink)),
         headerFilterFunc: (t, v) => (v || []).some((x) => x.ip.includes(t) || (x.name || "").toLowerCase().includes(String(t).toLowerCase())),
@@ -361,6 +383,79 @@ function kv(pairs) {
   return el("dl", { class: "kv" }, pairs.filter(([, v]) => v !== undefined).flatMap(([k, v]) => [el("dt", { text: k }), el("dd", {}, v instanceof Node ? v : String(v ?? ""))]));
 }
 
+// ---------- queried providers (cached answers: context, not verdicts) ----------
+const PROVIDERS = {
+  internetdb: { title: "Shodan InternetDB", kinds: ["ip"], auto: true },
+  abuseipdb: { title: "AbuseIPDB", kinds: ["ip"], auto: true },
+  censys: { title: "Censys", kinds: ["ip", "domain"], auto: false },
+};
+function lookupOf(row, name) { return row && row.queried && row.queried[name]; }
+function factsOf(row, name) { const l = lookupOf(row, name); return (l && l.found && l.facts) || null; }
+
+// One line per provider, for table cells.
+function abuseText(row) {
+  const f = factsOf(row, "abuseipdb");
+  if (!f) return lookupOf(row, "abuseipdb") ? "0% (no reports)" : "";
+  return `${f.score}% (${fmtNum(f.reports)} reports)`;
+}
+function portsText(row) {
+  const ports = new Set();
+  for (const p of (factsOf(row, "internetdb") || {}).ports || []) ports.add(p);
+  for (const s of (factsOf(row, "censys") || {}).services || []) ports.add(s.port);
+  return [...ports].sort((a, b) => a - b).join(", ");
+}
+function censysWebText(row) {
+  const f = factsOf(row, "censys");
+  if (!f) return lookupOf(row, "censys") ? "nothing found" : "";
+  return [...(f.labels || []), ...(f.software || []), f.cert_issuer ? `cert: ${f.cert_issuer}` : ""].filter(Boolean).join(" · ");
+}
+
+// The card for one provider's answer about an indicator.
+function lookupCard(name, intel, ind, kind) {
+  const pv = PROVIDERS[name];
+  const l = lookupOf(intel, name);
+  const card = el("div", { class: "card lookup" }, el("div", { class: "label", text: pv.title }));
+  if (!l) {
+    card.append(el("p", { class: "muted" }, pv.auto
+      ? "Not asked yet. The hourly run asks about addresses that are listed, banned or alerting."
+      : el("span", {}, "Not looked up. To spend a credit on it, on the server: ",
+          el("code", { text: `dnscount-admin enrich -provider ${name} -ip ${ind} -limit 1` }))));
+    return card;
+  }
+  const asOf = `as of ${fmtTime(l.as_of)}`;
+  if (!l.found) {
+    card.append(el("p", { class: "muted", text: `Nothing known (${asOf}).` }));
+    return card;
+  }
+  const f = l.facts || {};
+  let rows = [];
+  if (name === "internetdb") {
+    rows = [["Ports", (f.ports || []).join(", ") || "none"], ["Hostnames", (f.hostnames || []).join(", ") || undefined],
+      ["Software", (f.cpes || []).join(", ") || undefined], ["CVEs", (f.vulns || []).length ? tags(f.vulns) : undefined],
+      ["Tags", (f.tags || []).length ? tags(f.tags) : undefined]];
+  } else if (name === "abuseipdb") {
+    rows = [["Abuse score", `${f.score}%`], ["Reports", `${fmtNum(f.reports)} from ${fmtNum(f.users)} users`],
+      ["Last reported", f.last_reported ? fmtTime(f.last_reported) : undefined], ["Usage", f.usage || undefined],
+      ["ISP", f.isp || undefined], ["Tor", f.tor ? "yes" : undefined]];
+  } else if (kind === "domain") {
+    rows = [["Labels", (f.labels || []).length ? tags(f.labels) : undefined], ["Software", (f.software || []).join(", ") || undefined],
+      ["Certificate", (f.cert_names || []).join(", ") || undefined], ["Issuer", f.cert_issuer || undefined],
+      ["Threats", (f.threats || []).length ? tags(f.threats) : undefined]];
+  } else {
+    rows = [["Services", (f.services || []).map((s) => `${s.port}/${s.protocol}${(s.software || []).length ? " " + s.software.join(", ") : ""}`).join("; ") || "none"],
+      ["Names", (f.dns_names || []).join(", ") || undefined], ["AS", f.asn ? `AS${f.asn} ${f.as_name || ""}` : undefined],
+      ["Location", [f.city, f.country].filter(Boolean).join(", ") || undefined],
+      ["Labels", (f.labels || []).length ? tags(f.labels) : undefined], ["Threats", (f.threats || []).length ? tags(f.threats) : undefined],
+      ["CVEs", (f.vulns || []).length ? tags(f.vulns) : undefined], ["Reputation", f.reputation || undefined], ["GreyNoise", f.greynoise || undefined]];
+  }
+  card.append(kv(rows), el("p", { class: "muted", style: "margin:6px 0 0;font-size:12px", text: asOf }));
+  return card;
+}
+
+function lookupCards(intel, ind, kind) {
+  return Object.keys(PROVIDERS).filter((n) => PROVIDERS[n].kinds.includes(kind)).map((n) => lookupCard(n, intel, ind, kind));
+}
+
 function intelCard(intel) {
   const card = el("div", { class: "card intel" });
   if (!intel || (!intel.asn && !intel.special && !(intel.matches || []).length)) {
@@ -407,7 +502,7 @@ async function renderIP(ip) {
       ["DNS lookups", fmtNum(h.dns_queries?.count)],
       ["Connections", fmtNum(h.connections?.count)],
       ["Breaker trips", fmtNum(h.previous_trips)],
-    ]))),
+    ])), p.lan ? [] : lookupCards(p.intel, ip, "ip")),
   );
   if (p.intel && (p.intel.matches || []).length) { main.append(el("h2", { text: "Lists" })); matchesTable(main, p.intel.matches); }
   main.append(el("h2", { text: "Names that resolved to it (outgoing)" }));
@@ -435,7 +530,7 @@ async function renderDomain(d) {
   const p = await api(`/api/domain/${encodeURIComponent(d)}`, { since: state.since });
   main.replaceChildren(el("h1", { text: d }),
     el("p", { class: "lede", text: "Lookups include subdomains. Answers are the addresses this exact name resolved to." }),
-    el("div", { class: "grid" }, intelCard(p.intel)));
+    el("div", { class: "grid" }, intelCard(p.intel), lookupCards(p.intel, d, "domain")));
   if (p.intel && (p.intel.matches || []).length) { main.append(el("h2", { text: "Lists" })); matchesTable(main, p.intel.matches); }
   main.append(el("h2", { text: "Who looked it up" }));
   table(main, p.lookups, [col("Client", "client_ip", "client"), col("Name", "client_name"), col("Lookups", "count", "num"),
@@ -685,6 +780,12 @@ async function renderHealth() {
   if ((h.data_problems || []).length) main.append(el("ul", {}, h.data_problems.map((p) => el("li", { text: p }))));
   else main.append(el("p", { class: "muted", text: `None (checked ${fmtTime(h.checked_at)}).` }));
   if (h.check_error) main.append(el("p", { class: "error", text: h.check_error }));
+  main.append(el("h2", { text: "Outside services (queried providers)" }),
+    el("p", { class: "muted", text: "Requests sent, against each provider's caps; answers are cached and re-asked after their TTL." }));
+  if (h.lookups_error) main.append(el("p", { class: "error", text: h.lookups_error }));
+  table(main, h.lookups || [], [col("Provider", "provider"), col("Units, last 24h", "units_24h", "num"),
+    col("Units this month", "units_month", "num"), col("Cached answers", "cached", "num"),
+    col("Last request", "last_request", "time"), col("Last error", "last_error"), col("Error at", "last_error_at", "time")], { pagination: false });
   main.append(el("h2", { text: "Breakers (live admin API)" }));
   if (h.admin_error) main.append(el("p", { class: "error", text: h.admin_error }));
   table(main, h.breakers || [], [col("Name", "name"), col("Trips", "trips", "num"), col("Suppressed", "suppressed", "num"),
