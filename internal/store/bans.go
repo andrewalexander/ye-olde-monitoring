@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -203,8 +204,7 @@ func portNum(s string) (int, error) {
 // jails, not counting fail2ban restoring a ban across a restart.
 func (s *Store) BanCounts(ips []string, since time.Time) (map[string]int64, error) {
 	out := map[string]int64{}
-	for start := 0; start < len(ips); start += 400 {
-		chunk := ips[start:min(start+400, len(ips))]
+	for chunk := range slices.Chunk(ips, maxVars) {
 		// From a little before since, so an unban just before it can mark a
 		// ban just after it as a restore.
 		args := []any{fmtTime(since.Add(-RestoreGap))}

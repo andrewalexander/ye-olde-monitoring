@@ -22,20 +22,7 @@ type ClientCount struct {
 }
 
 func (s *Store) lanClients() (map[string]bool, error) {
-	rows, err := s.query(`SELECT ip FROM enrich.lan_clients`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]bool{}
-	for rows.Next() {
-		var ip string
-		if err := rows.Scan(&ip); err != nil {
-			return nil, err
-		}
-		out[ip] = true
-	}
-	return out, rows.Err()
+	return s.columnSet(`SELECT ip FROM enrich.lan_clients`)
 }
 
 // IsLAN says whether ip is private or has used the router's DNS.
@@ -279,20 +266,7 @@ func verdictOf(i *Intel) int {
 
 // firstSeenSince is the indicators of kind first seen at or after since.
 func (s *Store) firstSeenSince(kind string, since time.Time) (map[string]bool, error) {
-	rows, err := s.query(`SELECT indicator FROM enrich.indicators WHERE kind = ? AND first_seen >= ?`, kind, fmtTime(since))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]bool{}
-	for rows.Next() {
-		var k string
-		if err := rows.Scan(&k); err != nil {
-			return nil, err
-		}
-		out[k] = true
-	}
-	return out, rows.Err()
+	return s.columnSet(`SELECT indicator FROM enrich.indicators WHERE kind = ? AND first_seen >= ?`, kind, fmtTime(since))
 }
 
 // listedDomains is every domain on a list now: domain -> worst verdict and feeds.
@@ -650,7 +624,7 @@ func (s *Store) Flagged(q FlaggedQuery) ([]FlaggedRow, error) {
 		return rows.Err()
 	}
 	if len(listedArgs) > 0 {
-		in := strings.TrimSuffix(strings.Repeat("?,", len(listedArgs)), ",")
+		in := placeholders(len(listedArgs))
 		rows, err := s.query(`SELECT i.indicator, i.kind, i.roles, i.first_seen, i.last_seen,
 				max(CASE e.verdict WHEN 'malicious' THEN 3 WHEN 'suspicious' THEN 2 ELSE 1 END) AS rank
 			FROM enrich.enrichment e JOIN enrich.indicators i ON i.indicator = e.indicator
@@ -744,21 +718,8 @@ func (s *Store) Flagged(q FlaggedQuery) ([]FlaggedRow, error) {
 }
 
 func (s *Store) domainsResolvingTo(ip, since string, limit int) ([]string, error) {
-	rows, err := s.query(`SELECT domain FROM dns_replies WHERE answer = ? AND ts >= ?
+	return s.column(`SELECT domain FROM dns_replies WHERE answer = ? AND ts >= ?
 		GROUP BY domain ORDER BY count(*) DESC LIMIT ?`, ip, since, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var d string
-		if err := rows.Scan(&d); err != nil {
-			return nil, err
-		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
 }
 
 func (s *Store) clientCounts(domains []string, since string) ([]ClientCount, error) {
@@ -770,7 +731,7 @@ func (s *Store) clientCounts(domains []string, since string) ([]ClientCount, err
 		args = append(args, d)
 	}
 	rows, err := s.query(`SELECT client_ip, count(*) FROM dns_queries WHERE ts >= ? AND domain IN (`+
-		strings.TrimSuffix(strings.Repeat("?,", len(domains)), ",")+`) GROUP BY client_ip ORDER BY 2 DESC`, args...)
+		placeholders(len(domains))+`) GROUP BY client_ip ORDER BY 2 DESC`, args...)
 	if err != nil {
 		return nil, err
 	}

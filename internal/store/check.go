@@ -52,20 +52,12 @@ func (s *Store) Check(now time.Time) ([]string, error) {
 }
 
 func (s *Store) countBadIPs(table, col string) (int, error) {
-	rows, err := s.query(`SELECT DISTINCT ` + col + ` FROM ` + table)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
+	ips, err := s.column(`SELECT DISTINCT ` + col + ` FROM ` + table)
 	n := 0
-	for rows.Next() {
-		var ip string
-		if err := rows.Scan(&ip); err != nil {
-			return 0, err
-		}
+	for _, ip := range ips {
 		if _, err := netip.ParseAddr(ip); err != nil && ip != "" {
 			n++
 		}
 	}
-	return n, rows.Err()
+	return n, err
 }

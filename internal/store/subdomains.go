@@ -24,19 +24,11 @@ func (s *Store) indexedLookups(domain string, since time.Time) ([]ClientLookups,
 	}
 	names := map[string]bool{domain: true}
 	collect := func(q string, args ...any) error {
-		rows, err := s.query(q, args...)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var n string
-			if err := rows.Scan(&n); err != nil {
-				return err
-			}
+		ns, err := s.column(q, args...)
+		for _, n := range ns {
 			names[n] = true
 		}
-		return rows.Err()
+		return err
 	}
 	if err := collect(`SELECT indicator FROM enrich.indicators WHERE kind = 'domain'
 		AND length(indicator) > length(?1) AND substr(indicator, -length(?1)-1) = '.' || ?1`, domain); err != nil {

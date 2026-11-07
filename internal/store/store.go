@@ -53,6 +53,38 @@ func (s *Store) query(q string, args ...any) (*sql.Rows, error) {
 func (s *Store) queryRow(q string, args ...any) *sql.Row {
 	return s.db.QueryRowContext(s.c(), q, args...)
 }
+
+// column runs q and returns its one (string) column.
+func (s *Store) column(q string, args ...any) ([]string, error) {
+	rows, err := s.query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// columnSet is column as a set.
+func (s *Store) columnSet(q string, args ...any) (map[string]bool, error) {
+	vs, err := s.column(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(vs))
+	for _, v := range vs {
+		out[v] = true
+	}
+	return out, nil
+}
+
 func (s *Store) exec(q string, args ...any) (sql.Result, error) {
 	return s.db.ExecContext(s.c(), q, args...)
 }

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"strings"
 	"time"
 )
@@ -55,8 +56,7 @@ func (s *Store) Devices(ips []string, at time.Time) (map[string]Device, error) {
 		until = fmtTime(at)
 	}
 	var macs []string
-	for start := 0; start < len(ips); start += 400 {
-		chunk := ips[start:min(start+400, len(ips))]
+	for chunk := range slices.Chunk(ips, maxVars) {
 		args := []any{until}
 		for _, ip := range chunk {
 			args = append(args, ip)
@@ -111,8 +111,7 @@ func (s *Store) macNames(macs []string, until string) (map[string]macName, error
 			uniq = append(uniq, m)
 		}
 	}
-	for start := 0; start < len(uniq); start += 400 {
-		chunk := uniq[start:min(start+400, len(uniq))]
+	for chunk := range slices.Chunk(uniq, maxVars) {
 		args := []any{until}
 		for _, m := range chunk {
 			args = append(args, m)
@@ -178,3 +177,6 @@ func (s *Store) DeviceSightings(ip string, limit int) ([]Sighting, error) {
 }
 
 func placeholders(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
+
+// maxVars is how many values one IN (...) gets, well under SQLite's limit.
+const maxVars = 400

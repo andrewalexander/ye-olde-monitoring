@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -310,21 +311,8 @@ func (s *Store) FeedVersion(provider string) (string, error) {
 // ReconcileASN re-looks-up every IP seen since `since`, recording owners
 // that changed.
 func (s *Store) ReconcileASN(t *enrich.ASNTable, since, now time.Time) (changed int, err error) {
-	rows, err := s.query(`SELECT indicator FROM indicators WHERE kind = 'ip' AND last_seen >= ?`, fmtTime(since))
+	ips, err := s.column(`SELECT indicator FROM indicators WHERE kind = 'ip' AND last_seen >= ?`, fmtTime(since))
 	if err != nil {
-		return 0, err
-	}
-	var ips []string
-	for rows.Next() {
-		var ip string
-		if err := rows.Scan(&ip); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		ips = append(ips, ip)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
 		return 0, err
 	}
 	tx, err := s.db.BeginTx(s.c(), nil)
@@ -531,13 +519,12 @@ func (s *Store) Intel(inds []string, history bool) (map[string]*Intel, error) {
 		}
 		return out[k]
 	}
-	for start := 0; start < len(inds); start += 400 {
-		chunk := inds[start:min(start+400, len(inds))]
+	for chunk := range slices.Chunk(inds, maxVars) {
 		args := make([]any, len(chunk))
 		for i, v := range chunk {
 			args[i] = v
 		}
-		in := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
+		in := placeholders(len(chunk))
 		current := ` AND current = 1`
 		if history {
 			current = ``

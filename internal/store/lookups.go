@@ -18,22 +18,14 @@ import (
 // the neighbour table (lan_sightings). The privacy gate refuses all of them.
 // It needs the explorer's database attached (OpenReadOnly).
 func (s *Store) LANAddresses() (map[string]bool, error) {
-	rows, err := s.query(`SELECT ip FROM enrich.lan_clients UNION SELECT ip FROM lan_sightings WHERE ip != ''`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+	ips, err := s.column(`SELECT ip FROM enrich.lan_clients UNION SELECT ip FROM lan_sightings WHERE ip != ''`)
 	out := map[string]bool{}
-	for rows.Next() {
-		var ip string
-		if err := rows.Scan(&ip); err != nil {
-			return nil, err
-		}
+	for _, ip := range ips {
 		if a, err := netip.ParseAddr(ip); err == nil {
 			out[a.Unmap().String()] = true
 		}
 	}
-	return out, rows.Err()
+	return out, err
 }
 
 // Candidate is an indicator worth asking a queried provider about.
@@ -108,24 +100,15 @@ func (s *Store) LookupCandidates(since, now time.Time) ([]Candidate, error) {
 			add(Candidate{Indicator: d.Domain, Kind: "domain", verdict: rank, outgoing: true, hits: d.Lookups,
 				Reason: fmt.Sprintf("outgoing: %s domain (%s); %d lookups", d.Verdict, strings.Join(shortFeeds(d.Feeds), ", "), d.Lookups)})
 		}
-		rows, err := s.query(`SELECT DISTINCT answer FROM dns_replies WHERE domain = ? AND ts >= ?`, d.Domain, fmtTime(since))
+		answers, err := s.column(`SELECT DISTINCT answer FROM dns_replies WHERE domain = ? AND ts >= ?`, d.Domain, fmtTime(since))
 		if err != nil {
 			return nil, err
 		}
 		var ips []string
-		for rows.Next() {
-			var a string
-			if err := rows.Scan(&a); err != nil {
-				rows.Close()
-				return nil, err
-			}
+		for _, a := range answers {
 			if ip, err := netip.ParseAddr(a); err == nil {
 				ips = append(ips, ip.Unmap().String())
 			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
 		}
 		for _, ip := range ips {
 			add(Candidate{Indicator: ip, Kind: "ip", verdict: rank, outgoing: true, hits: d.Lookups,
@@ -167,28 +150,18 @@ func shortFeeds(fs []string) []string {
 // (found or not): they aren't asked about again yet.
 func (s *Store) FreshLookups(provider string, inds []string, ttl time.Duration, now time.Time) (map[string]bool, error) {
 	out := map[string]bool{}
-	for start := 0; start < len(inds); start += 400 {
-		chunk := inds[start:min(start+400, len(inds))]
+	for chunk := range slices.Chunk(inds, maxVars) {
 		args := []any{provider, fmtTime(now.Add(-ttl))}
 		for _, i := range chunk {
 			args = append(args, i)
 		}
-		rows, err := s.query(`SELECT indicator FROM enrichment WHERE provider = ? AND method = 'queried'
+		fresh, err := s.column(`SELECT indicator FROM enrichment WHERE provider = ? AND method = 'queried'
 			AND last_seen >= ? AND indicator IN (`+placeholders(len(chunk))+`)`, args...)
 		if err != nil {
 			return nil, err
 		}
-		for rows.Next() {
-			var i string
-			if err := rows.Scan(&i); err != nil {
-				rows.Close()
-				return nil, err
-			}
+		for _, i := range fresh {
 			out[i] = true
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
 		}
 	}
 	return out, nil

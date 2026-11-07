@@ -362,37 +362,36 @@ func (s *Store) ConnsForClient(ip string, since time.Time) ([]ConnStat, error) {
 // too, so a router drop (WAN_LOCAL) and a forwarded connection (WAN_IN) are
 // told apart. limit caps the groups, busiest first.
 func (s *Store) ConnsForIP(ip string, since time.Time, limit int) ([]ConnStat, error) {
-	rows, err := s.query(`SELECT client_ip, dst_ip, dst_port, proto, action, rule, count(*), min(ts), max(ts) FROM connections
-		WHERE (client_ip = ?1 OR dst_ip = ?1) AND ts >= ?2 GROUP BY 1,2,3,4,5,6 ORDER BY 7 DESC, 9 DESC LIMIT ?3`,
+	out, err := s.conns(`SELECT client_ip, dst_ip, dst_port, proto, action, count(*), min(ts), max(ts), rule FROM connections
+		WHERE (client_ip = ?1 OR dst_ip = ?1) AND ts >= ?2 GROUP BY 1,2,3,4,5,9 ORDER BY 6 DESC, 8 DESC LIMIT ?3`,
 		ip, fmtTime(since), limit)
-	if err != nil {
-		return nil, err
+	if out == nil && err == nil {
+		out = []ConnStat{}
 	}
-	defer rows.Close()
-	out := []ConnStat{}
-	for rows.Next() {
-		var c ConnStat
-		var first, last string
-		if err := rows.Scan(&c.ClientIP, &c.DstIP, &c.DstPort, &c.Proto, &c.Action, &c.Rule, &c.Count, &first, &last); err != nil {
-			return nil, err
-		}
-		c.First, c.Last = parseTime(first), parseTime(last)
-		out = append(out, c)
-	}
-	return out, rows.Err()
+	return out, err
 }
 
+// conns scans client_ip, dst_ip, dst_port, proto, action, count, first,
+// last and, if q selects a ninth column, rule.
 func (s *Store) conns(q string, args ...any) ([]ConnStat, error) {
 	rows, err := s.query(q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
 	var out []ConnStat
 	for rows.Next() {
 		var c ConnStat
 		var first, last string
-		if err := rows.Scan(&c.ClientIP, &c.DstIP, &c.DstPort, &c.Proto, &c.Action, &c.Count, &first, &last); err != nil {
+		dst := []any{&c.ClientIP, &c.DstIP, &c.DstPort, &c.Proto, &c.Action, &c.Count, &first, &last}
+		if len(cols) > len(dst) {
+			dst = append(dst, &c.Rule)
+		}
+		if err := rows.Scan(dst...); err != nil {
 			return nil, err
 		}
 		c.First, c.Last = parseTime(first), parseTime(last)
