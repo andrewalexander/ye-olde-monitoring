@@ -126,9 +126,16 @@ func New(cfg Config) (*Listener, error) {
 			Name: "syslog-not-allowed", Window: time.Minute, Cooldown: 2 * cfg.Cooldown, MaxBad: 1,
 			Now: cfg.Now, OnTrip: cfg.OnTrip, OnEnd: cfg.OnEnd,
 		}),
-		parser: ingest.Multi{dns.Dnsmasq{}, fw.IPTables{}, ids.UniFi{}, lan.DHCP{}, lan.Neighbours{}},
+		parser: UniFi(),
 		dedup:  ingest.NewDeduper(),
 	}, nil
+}
+
+// UniFi parses every line a UniFi router's syslog carries that we keep:
+// dnsmasq, firewall, IDS/IPS and LAN-device lines. The listener and
+// "ingest-dns -format unifi" both use it, so they can't drift apart.
+func UniFi() ingest.Multi {
+	return ingest.Multi{dns.Dnsmasq{}, fw.IPTables{}, ids.UniFi{}, lan.DHCP{}, lan.Neighbours{}}
 }
 
 func (l *Listener) allowed(a netip.Addr) bool { return hit.InPrefixes(a, l.cfg.Allow) }

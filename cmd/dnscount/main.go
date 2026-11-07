@@ -1,17 +1,5 @@
 // Command dnscount is a dumb simple hit counter and request/DNS logger.
-//
-//	dnscount serve          public counter + /ingest collector + localhost health endpoint
-//	dnscount syslog         receive UniFi remote syslog (DNS lookups, firewall logs)
-//	dnscount ingest-access  import nginx/apache/caddy access logs
-//	dnscount ingest-dns     import dnsmasq/UniFi/Pi-hole or AdGuard logs
-//	dnscount ingest-bans    import fail2ban's log (bans and unbans)
-//	dnscount ingest-auth    import an app's refused logins (Jellyfin's log)
-//	dnscount report         hits | dns | alerts | bans | flagged | trips | trip <id>
-//	dnscount check          data sanity checks
-//	dnscount backup         timestamped copy of the database
-//	dnscount explore        LAN table explorer over a read-only view, with feed matches
-//	dnscount feeds          download the threat feeds
-//	dnscount enrich         match indicators against the feeds once
+// Run it with no arguments for the list of commands (usage, below).
 package main
 
 import (
@@ -34,10 +22,7 @@ import (
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/dns"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/f2b"
-	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/fw"
-	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/ids"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/jellyfin"
-	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/lan"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/syslog"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/server"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
@@ -249,7 +234,7 @@ func ingestDNS(args []string) error {
 		p = dns.Dnsmasq{}
 	case "unifi":
 		// A raw syslog file is mostly lines no parser here wants.
-		p = ingest.Unguard(ingest.Multi{dns.Dnsmasq{}, fw.IPTables{}, ids.UniFi{}, lan.DHCP{}, lan.Neighbours{}})
+		p = ingest.Unguard(syslog.UniFi())
 	case "adguard":
 		p = dns.AdGuard{}
 	default:
