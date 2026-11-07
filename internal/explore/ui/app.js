@@ -92,7 +92,7 @@ function link(view, value, text) {
 function ipLink(ip) { return link("ip", ip); }
 // A LAN client with its lookup count, named when we know the device.
 function clientLink(x) {
-  const a = link("client", x.ip, `${x.name || x.ip} (${x.count})`);
+  const a = link("ip", x.ip, `${x.name || x.ip} (${x.count})`);
   a.title = x.name ? `${x.name}: ${x.ip}` : x.ip;
   return a;
 }
@@ -118,7 +118,7 @@ const F = {
   time: (c) => document.createTextNode(fmtTime(c.getValue())),
   ip: (c) => ipLink(c.getValue()),
   domain: (c) => domainLink(c.getValue()),
-  client: (c) => link("client", c.getValue()),
+  client: (c) => ipLink(c.getValue()),
   verdict: (c) => badge(c.getValue()),
   tags: (c) => tags(c.getValue()),
   list: (c) => document.createTextNode((c.getValue() || []).join(", ")),
@@ -327,7 +327,7 @@ const NAV = [
 
 function renderNav(view) {
   const nav = document.getElementById("nav");
-  nav.replaceChildren(...NAV.map(([v, t]) => el("a", { href: href(v), class: v === view || (view === "ip" && v === "ips") || (view === "domain" && v === "domains") || (view === "client" && v === "clients") ? "on" : "", text: t })));
+  nav.replaceChildren(...NAV.map(([v, t]) => el("a", { href: href(v), class: v === view || (view === "ip" && v === "ips") || (view === "domain" && v === "domains") ? "on" : "", text: t })));
 }
 
 function optionControls(view, def, q) {
@@ -497,7 +497,7 @@ async function renderIP(ip) {
   const devName = p.device && p.device.name;
   main.replaceChildren(
     el("h1", { text: devName ? `${devName} (${ip})` : ip }),
-    el("p", { class: "lede" }, p.lan ? el("span", {}, "A LAN address. ", el("a", { href: href("client", ip), text: "What it looked up" }), ". ") : "", "Counts below are all-time; the tables cover the selected window."),
+    el("p", { class: "lede" }, p.lan ? "A LAN address. " : "", "Counts below are all-time; the tables cover the selected window."),
     el("div", { class: "grid" }, p.lan ? deviceCard(p.device) : null, intelCard(p.intel), el("div", { class: "card" }, kv([
       ["Hits", h.hits?.count ? `${fmtNum(h.hits.count)} (${fmtTime(h.hits.first)} – ${fmtTime(h.hits.last)})` : "0"],
       ["DNS lookups", fmtNum(h.dns_queries?.count)],
@@ -506,6 +506,12 @@ async function renderIP(ip) {
     ])), p.lan ? [] : lookupCards(p.intel, ip, "ip")),
   );
   if (p.intel && (p.intel.matches || []).length) { main.append(el("h2", { text: "Lists" })); matchesTable(main, p.intel.matches); }
+  if (p.lan) {
+    const rows = p.lookups || [];
+    main.append(el("h2", { text: `What it looked up (${fmtNum(rows.length)}, ${rows.filter((r) => r.flagged).length} flagged)` }));
+    table(main, rows, [col("Flagged", "flagged", "bool", { sorter: "boolean" }), col("Domain", "domain", "domain"), col("Lookups", "count", "num"),
+      col("First", "first", "time"), col("Last", "last", "time")]);
+  }
   main.append(el("h2", { text: "Names that resolved to it (outgoing)" }));
   table(main, p.resolved_from, [col("Domain", "domain", "domain"), col("Answers", "count", "num"), col("Last", "last", "time"),
     col("LAN clients", "clients", "list", { formatter: (c) => el("span", { class: "tags" }, (c.getValue() || []).map(clientLink)) })]);
@@ -578,30 +584,6 @@ function sightingsTable(main, rows) {
   main.append(el("h2", { text: "Sightings (this address and every address its MAC used)" }));
   table(main, rows, [col("Time", "ts", "time"), col("Address", "ip", "ip"), col("MAC", "mac"), col("Hostname", "hostname"),
     col("Alias", "alias"), col("Network", "network"), col("Interface", "iface"), col("Event", "event"), col("Source", "source")]);
-}
-
-async function renderClient(ip) {
-  const main = $main();
-  main.replaceChildren(el("h1", { text: ip }), el("p", { class: "muted", text: "Loading…" }));
-  const limit = state.limits.client || 500;
-  const [p, dev] = await Promise.all([api("/api/dns", { client: ip, since: state.since, limit }),
-    api(`/api/device/${encodeURIComponent(ip)}`).catch(() => ({}))]);
-  const flaggedSet = new Set();
-  try {
-    const fl = await api("/api/domains", { since: state.since, flagged: 1, limit: 5000 });
-    for (const d of fl || []) flaggedSet.add(d.domain);
-  } catch { /* the lookups table still works */ }
-  const name = dev.device && dev.device.name;
-  main.replaceChildren(el("h1", { text: name ? `${name} (${ip})` : ip }),
-    el("p", { class: "lede" }, "What this LAN device looked up. ", el("a", { href: href("ip", ip), text: "Its address profile" }), "."),
-    el("div", { class: "grid" }, deviceCard(dev.device)));
-  const rows = (p || []).map((r) => ({ ...r, flagged: flaggedSet.has(r.domain) }));
-  rows.sort((a, b) => (b.flagged - a.flagged) || (b.count - a.count));
-  main.append(el("h2", { text: `Lookups (${fmtNum(rows.length)}, ${rows.filter((r) => r.flagged).length} flagged)` }));
-  if (rows.length >= limit) main.append(el("button", { text: "Show more", onclick: () => { state.limits.client = limit * 2; route(); } }));
-  table(main, rows, [col("Flagged", "flagged", "bool", { sorter: "boolean" }), col("Domain", "domain", "domain"), col("Lookups", "count", "num"),
-    col("First", "first", "time"), col("Last", "last", "time")]);
-  if ((dev.sightings || []).length) sightingsTable(main, dev.sightings);
 }
 
 async function renderOverview() {
@@ -819,7 +801,7 @@ async function route(opts) {
     if (LIST_VIEWS[view]) await renderList(view, q);
     else if (view === "ip" && arg) await renderIP(arg);
     else if (view === "domain" && arg) await renderDomain(arg);
-    else if (view === "client" && arg) await renderClient(arg);
+    else if (view === "client" && arg) location.replace(href("ip", arg)); // old links
     else if (view === "health") await renderHealth();
     else await renderOverview();
     if (opts?.quiet) {

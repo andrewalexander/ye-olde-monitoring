@@ -104,6 +104,19 @@ func TestExplorerEndToEnd(t *testing.T) {
 	if len(hits) != 1 || hits[0]["client_ip"] != "203.0.113.66" || hits[0]["verdict"] != "malicious" {
 		t.Errorf("hit without intel: %s", body)
 	}
+	// A LAN address's page lists what it looked up, flagged by the answer.
+	_, body = get(t, h, "/api/ip/192.168.1.20")
+	var prof struct {
+		LAN     bool
+		Lookups []struct {
+			Domain  string
+			Flagged bool
+		}
+	}
+	json.Unmarshal([]byte(body), &prof)
+	if !prof.LAN || len(prof.Lookups) != 1 || prof.Lookups[0].Domain != "evil.example.org" || !prof.Lookups[0].Flagged {
+		t.Errorf("LAN profile lookups = %s", body)
+	}
 	_, body = get(t, h, "/api/overview")
 	if !strings.Contains(body, `"flagged": 1`) || !strings.Contains(body, `"hits"`) {
 		t.Errorf("overview = %s", body)

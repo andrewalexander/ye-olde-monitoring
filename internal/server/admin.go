@@ -68,13 +68,6 @@ func ReadRoutes(rc RouteConfig) map[string]http.HandlerFunc {
 		"GET /api/hits": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
 			return st.Hits(p.HitFilter())
 		}),
-		"GET /api/dns": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
-			c := p.Str("client")
-			if c == "" {
-				return nil, ErrBadParam("need client=")
-			}
-			return st.DNSByClient(c, p.Since(), p.Int("limit"))
-		}),
 		"GET /api/alerts": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
 			f := p.AlertFilter()
 			if by := p.Str("by"); by != "" {

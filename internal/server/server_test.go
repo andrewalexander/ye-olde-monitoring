@@ -335,7 +335,7 @@ func TestReadRoutes(t *testing.T) {
 	if code, body := get("/api/hits?ip=203.0.113.50"); code != 200 || !strings.Contains(body, `"203.0.113.50"`) {
 		t.Errorf("hits: %d %s", code, body)
 	}
-	for _, url := range []string{"/api/hits?status=abc", "/api/hits?since=nonsense", "/api/dns"} {
+	for _, url := range []string{"/api/hits?status=abc", "/api/hits?since=nonsense"} {
 		if code, _ := get(url); code != 400 {
 			t.Errorf("%s = %d, want 400", url, code)
 		}

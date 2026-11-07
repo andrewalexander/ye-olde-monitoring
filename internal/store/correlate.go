@@ -245,6 +245,31 @@ func (s *Store) InboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 	return out[:min(len(out), q.Limit)], nil
 }
 
+// flaggedRank is the verdict rank (enrich.VerdictRank) from which a looked-up
+// domain counts as flagged: suspicious or worse.
+const flaggedRank = 2
+
+// domainRanker rates a looked-up domain by the worst of its own lists and
+// those of the addresses it resolved to since since.
+func (s *Store) domainRanker(since time.Time) (func(d string) int, error) {
+	listed, err := s.listedDomains()
+	if err != nil {
+		return nil, err
+	}
+	answers, err := s.flaggedAnswers(since)
+	if err != nil {
+		return nil, err
+	}
+	return func(d string) int {
+		norm, _ := enrich.PublicDomain(d)
+		r := verdictOf(listed[norm])
+		if a := answers[d]; a != nil {
+			r = max(r, enrich.VerdictRank(a.Verdict))
+		}
+		return r
+	}, nil
+}
+
 func verdictOf(i *Intel) int {
 	if i == nil {
 		return 0
@@ -468,11 +493,7 @@ type ClientRow struct {
 // Clients lists the LAN devices that looked things up since `since`, and how
 // many of those lookups were flagged (directly, or by what they resolved to).
 func (s *Store) Clients(since time.Time) ([]ClientRow, error) {
-	listed, err := s.listedDomains()
-	if err != nil {
-		return nil, err
-	}
-	answers, err := s.flaggedAnswers(since)
+	rank, err := s.domainRanker(since)
 	if err != nil {
 		return nil, err
 	}
@@ -520,13 +541,9 @@ func (s *Store) Clients(since time.Time) ([]ClientRow, error) {
 		if fresh[norm] {
 			c.NewDomains++
 		}
-		r := verdictOf(listed[norm])
-		if a := answers[d]; a != nil {
-			r = max(r, enrich.VerdictRank(a.Verdict))
-		}
-		if r >= 2 {
+		if r := rank(d); r >= flaggedRank {
 			c.Flagged++
-			flagged[ip] = append(flagged[ip], flaggedDomain{d, r, n})
+			flagged[ip] = append(flagged[ip], flaggedDomain{d, rank(d), n})
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -810,7 +827,19 @@ type IPProfile struct {
 	// UniFi, neighbour table), across every address it has used.
 	Device    *Device    `json:"device,omitempty"`
 	Sightings []Sighting `json:"sightings,omitempty"`
+	// For LAN addresses: what it looked up, flagged first.
+	Lookups []FlaggedLookup `json:"lookups,omitempty"`
 }
+
+// FlaggedLookup is one domain a LAN client looked up, and whether it (or
+// an address it resolved to) is listed suspicious or worse.
+type FlaggedLookup struct {
+	DomainLookups
+	Flagged bool `json:"flagged"`
+}
+
+// profileLookups is how many domains a LAN address's profile lists.
+const profileLookups = 500
 
 // IPProfile gathers one address's activity since `since` (its history
 // counts are all-time).
@@ -837,6 +866,9 @@ func (s *Store) IPProfile(ip string, since, now time.Time) (IPProfile, error) {
 			p.Device = &d
 		}
 		if p.Sightings, err = s.DeviceSightings(ip, 50); err != nil {
+			return p, err
+		}
+		if p.Lookups, err = s.flaggedLookups(ip, since); err != nil {
 			return p, err
 		}
 	}
@@ -1036,4 +1068,30 @@ func (s *Store) Overview(now time.Time) (Overview, error) {
 		}
 	}
 	return o, rows.Err()
+}
+
+func (s *Store) flaggedLookups(ip string, since time.Time) ([]FlaggedLookup, error) {
+	lookups, err := s.DNSByClient(ip, since, profileLookups)
+	if err != nil || len(lookups) == 0 {
+		return nil, err
+	}
+	rank, err := s.domainRanker(since)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]FlaggedLookup, len(lookups))
+	for i, l := range lookups {
+		out[i] = FlaggedLookup{l, rank(l.Domain) >= flaggedRank}
+	}
+	// Flagged first; DNSByClient already ordered each group by count.
+	slices.SortStableFunc(out, func(a, b FlaggedLookup) int {
+		if a.Flagged == b.Flagged {
+			return 0
+		}
+		if a.Flagged {
+			return -1
+		}
+		return 1
+	})
+	return out, nil
 }

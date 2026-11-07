@@ -73,23 +73,6 @@ func (x *Explorer) Handler() http.Handler {
 		}
 		return st.IPProfile(ip, p.SinceOr("30d"), x.cfg.Now())
 	})
-	routes["GET /api/device/{ip}"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
-		a, err := netip.ParseAddr(r.PathValue("ip"))
-		if err != nil {
-			return nil, server.ErrBadParam("not an IP address")
-		}
-		ip := a.Unmap().String()
-		dev, err := st.Devices([]string{ip}, time.Time{})
-		if err != nil {
-			return nil, err
-		}
-		sightings, err := st.DeviceSightings(ip, p.IntOr("limit", 100))
-		out := map[string]any{"ip": ip, "sightings": sightings}
-		if d, ok := dev[ip]; ok {
-			out["device"] = d
-		}
-		return out, err
-	})
 	routes["GET /api/domains"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
 		return st.Domains(list(p))
 	})
