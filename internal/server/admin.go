@@ -143,15 +143,6 @@ func (p *Params) IntOr(k string, def int) int {
 	return n
 }
 
-// Bool reads 1/true/yes as true.
-func (p *Params) Bool(k string) bool {
-	switch p.Str(k) {
-	case "1", "true", "yes":
-		return true
-	}
-	return false
-}
-
 func (p *Params) Since() time.Time { return p.SinceOr("") }
 
 // SinceOr reads since=, defaulting to def (a since= value) when it's absent.

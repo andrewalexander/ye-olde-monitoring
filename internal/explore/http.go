@@ -57,7 +57,7 @@ func (x *Explorer) Handler() http.Handler {
 	})
 
 	list := func(p *server.Params) store.ListQuery {
-		return store.ListQuery{Since: p.SinceOr("7d"), Flagged: p.Bool("flagged"), Order: p.Str("order"), Limit: p.Int("limit")}
+		return store.ListQuery{Since: p.SinceOr("7d"), Order: p.Str("order"), Limit: p.Int("limit")}
 	}
 	routes["GET /api/ips"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
 		return st.InboundIPs(list(p), x.cfg.Now())

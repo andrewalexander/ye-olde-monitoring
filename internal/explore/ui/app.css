@@ -99,6 +99,7 @@ h2 { font-size: 15px; margin: 24px 0 8px; }
 .lede { color: var(--ink-2); margin: 0 0 12px; max-width: 70ch; }
 .controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 0 0 10px; color: var(--ink-2); }
 .error { color: var(--critical); white-space: pre-wrap; }
+pre.detail { overflow-x: auto; max-width: 100%; padding: 10px; border: 1px solid var(--border, #ccc); border-radius: 6px; font-size: 12px; }
 .foot { padding: 8px 16px 24px; text-align: center; }
 
 .card {

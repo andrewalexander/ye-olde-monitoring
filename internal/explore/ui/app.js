@@ -212,7 +212,7 @@ const LIST_VIEWS = {
   ips: {
     title: "Inbound IPs",
     lede: "Public addresses that hit our sites, were banned, raised IDS alerts or tripped a breaker. Flagged ones first.",
-    url: "/api/ips", options: ["flagged", "order"],
+    url: "/api/ips", options: ["order"],
     columns: () => [
       col("Verdict", "verdict", "verdict"), col("IP", "ip", "ip"), col("Feeds", "feeds", "tags"),
       col("AS", "asn", "text", { formatter: (c) => document.createTextNode(asnText(c.getRow().getData())) }),
@@ -225,7 +225,7 @@ const LIST_VIEWS = {
   domains: {
     title: "Domains",
     lede: "What the LAN looked up. A verdict comes from the domain itself (or a parent) being listed, or from an address it resolved to.",
-    url: "/api/domains", options: ["flagged", "order"], defaultOrder: "recent",
+    url: "/api/domains", options: ["order"], defaultOrder: "recent",
     columns: () => [
       col("Verdict", "verdict", "verdict", { mutator: (v, d) => worst(v, d.answers && d.answers.verdict) }),
       col("Domain", "domain", "domain"), col("Feeds", "feeds", "tags"),
@@ -311,6 +311,7 @@ const LIST_VIEWS = {
     lede: "Clients that tripped dnscount's own rate limits.",
     url: "/api/trips", options: [],
     columns: () => [
+      col("Trip", "id", "num", { formatter: (c) => link("trip", String(c.getValue()), `#${c.getValue()}`) }),
       col("Tripped", "tripped_at", "time"), col("Breaker", "breaker"), col("Who", "key", "ip"), col("Reason", "reason"),
       col("Events", "window_events", "num"), col("Bad", "window_bad", "num"),
       col("Suppressed", "suppressed_during_cooldown", "num"), col("Ended", "ended_at", "time"), bans30(),
@@ -327,18 +328,15 @@ const NAV = [
 
 function renderNav(view) {
   const nav = document.getElementById("nav");
-  nav.replaceChildren(...NAV.map(([v, t]) => el("a", { href: href(v), class: v === view || (view === "ip" && v === "ips") || (view === "domain" && v === "domains") ? "on" : "", text: t })));
+  const parent = { ip: "ips", domain: "domains", trip: "trips" }[view];
+  nav.replaceChildren(...NAV.map(([v, t]) => el("a", { href: href(v), class: v === view || v === parent ? "on" : "", text: t })));
 }
 
 function optionControls(view, def, q) {
   const box = el("div", { class: "controls" });
   const set = (k, v) => { const nq = new URLSearchParams(q); if (v) nq.set(k, v); else nq.delete(k); location.hash = href(view, "", nq); };
   for (const o of def.options) {
-    if (o === "flagged") {
-      const cb = el("input", { type: "checkbox", onchange: (e) => set("flagged", e.target.checked ? "1" : "") });
-      cb.checked = q.get("flagged") === "1";
-      box.append(el("label", {}, cb, " only flagged"));
-    } else if (o === "order") {
+    if (o === "order") {
       const s = el("select", { onchange: (e) => set("order", e.target.value) },
         ["recent", "flagged", "top", "bottom", "new"].map((v) => el("option", { value: v, text: { recent: "latest first", flagged: "worst first", top: "busiest first", bottom: "quietest first", new: "new in window" }[v] })));
       s.value = q.get("order") || def.defaultOrder || "flagged";
@@ -420,7 +418,8 @@ function lookupCard(name, intel, ind, kind) {
     card.append(el("p", { class: "muted" }, pv.auto
       ? "Not asked yet. The hourly run asks about addresses that are listed, banned or alerting."
       : el("span", {}, "Not looked up. To spend a credit on it, on the server: ",
-          el("code", { text: `dnscount-admin enrich -provider ${name} -ip ${ind} -limit 1` }))));
+          el("code", { text: `dnscount-admin enrich -provider ${name} -ip ${ind} -limit 1` }),
+          " (NixOS; elsewhere ", el("code", { text: "dnscount enrich" }), ")")));
     return card;
   }
   const asOf = `as of ${fmtTime(l.as_of)}`;
@@ -595,7 +594,6 @@ async function renderOverview() {
   if (!h.error) {
     main.append(el("div", { class: "grid" }, healthTiles(h)), el("p", {}, el("a", { href: href("health"), text: "Health details →" })));
   }
-  const tables = Object.entries(o.tables || {}).map(([name, c]) => ({ name, rows: c.rows, last_24h: c.last_24h }));
   main.append(el("h2", { text: "Data" }),
     el("div", { class: "grid" },
       el("div", { class: "card tile" }, el("div", { class: "label", text: "Indicators indexed" }), el("div", { class: "value", text: fmtNum(o.indicators) })),
@@ -605,8 +603,21 @@ async function renderOverview() {
         el("div", { class: "state", text: `${fmtTime(o.loops?.last_index)} · ${fmtNum(o.loops?.last_index_rows)} rows · ${fmtNum(o.loops?.last_matched)} matched` }),
         o.loops?.last_error ? el("div", { class: "error", text: o.loops.last_error }) : null),
     ));
-  main.append(el("h2", { text: "Tables" }));
-  table(main, tables, [col("Table", "name"), col("Rows", "rows", "num"), col("Last 24h", "last_24h", "num")], { pagination: false });
+}
+
+// One breaker trip: what was recorded about the client when it tripped.
+async function renderTrip(id) {
+  const main = $main();
+  main.replaceChildren(el("h1", { text: `Trip #${id}` }), el("p", { class: "muted", text: "Loading…" }));
+  const t = await api(`/api/trips/${encodeURIComponent(id)}`);
+  main.replaceChildren(el("h1", { text: `Trip #${t.id}: ${t.breaker}` }),
+    el("p", { class: "lede", text: "Everything recorded about the client when it tripped: headers (secrets hashed), body samples, recent events, the rate curve and reverse DNS." }),
+    el("div", { class: "grid" }, el("div", { class: "card" }, kv([
+      ["Who", ipLink(t.key)], ["Reason", t.reason], ["Tripped", fmtTime(t.tripped_at)], ["Cooldown until", fmtTime(t.cooldown_until)],
+      ["Ended", fmtTime(t.ended_at) || "still cooling down"], ["Events in window", fmtNum(t.window_events)], ["Bad in window", fmtNum(t.window_bad)],
+      ["Suppressed during cooldown", fmtNum(t.suppressed_during_cooldown)], ["First seen in window", fmtTime(t.first_seen_in_window)],
+    ]))));
+  main.append(el("h2", { text: "Detail" }), el("pre", { class: "detail", text: JSON.stringify(t.detail ?? null, null, 2) }));
 }
 
 // ---------- health ----------
@@ -729,7 +740,8 @@ async function renderHealth() {
   const pick = el("select", { onchange: (e) => { state.healthRange = e.target.value; route(); } },
     [["1h", "last hour"], ["6h", "last 6 hours"], ["24h", "last 24 hours"]].map(([v, t]) => el("option", { value: v, text: t })));
   pick.value = range;
-  const [h, series] = await Promise.all([api("/api/health"), api("/api/health/series", { since: range, points: 240 })]);
+  const [h, series, o] = await Promise.all([api("/api/health"), api("/api/health/series", { since: range, points: 240 }),
+    api("/api/overview").catch(() => ({}))]);
   const t = h.thresholds || {};
   const pts = (f) => (series || []).map((s) => [Date.parse(s.ts), f(s)]).filter((p) => p[1] != null && !Number.isNaN(p[1]));
   const units = Object.keys((h.now || {}).units || {});
@@ -762,6 +774,9 @@ async function renderHealth() {
     col("Entries", "entries", "num"), col("Fetched", "age_s", "num", { formatter: (c) => document.createTextNode(fmtAge(c.getValue()) + (c.getValue() >= 0 ? " ago" : "")) }),
     col("Stale", "stale", "bool"), col("Unchecked rows", "outdated_rows", "num"), col("Skipped", "skipped"), col("Error", "error"),
     col("About", "about")], { pagination: false });
+  main.append(el("h2", { text: "Tables" }));
+  const tables = Object.entries(o.tables || {}).map(([name, c]) => ({ name, rows: c.rows, last_24h: c.last_24h }));
+  table(main, tables, [col("Table", "name"), col("Rows", "rows", "num"), col("Last 24h", "last_24h", "num")], { pagination: false });
   main.append(el("h2", { text: "Data problems" }));
   if ((h.data_problems || []).length) main.append(el("ul", {}, h.data_problems.map((p) => el("li", { text: p }))));
   else main.append(el("p", { class: "muted", text: `None (checked ${fmtTime(h.checked_at)}).` }));
@@ -801,6 +816,7 @@ async function route(opts) {
     if (LIST_VIEWS[view]) await renderList(view, q);
     else if (view === "ip" && arg) await renderIP(arg);
     else if (view === "domain" && arg) await renderDomain(arg);
+    else if (view === "trip" && arg) await renderTrip(arg);
     else if (view === "client" && arg) location.replace(href("ip", arg)); // old links
     else if (view === "health") await renderHealth();
     else await renderOverview();
