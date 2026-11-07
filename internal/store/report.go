@@ -338,14 +338,17 @@ type ConnStat struct {
 // ConnsForDomain joins answers for domain to connections that went to those
 // addresses: "looked it up, then actually connected".
 //
-// It starts from the connections in the window, which are few (only logged
-// rules), and asks the answer index whether domain resolved to each one's
-// destination. Starting from the answers instead means matching every reply
-// by suffix, which reads all of dns_replies.
+// Connections in a window go to few distinct addresses (most are scanners
+// hitting our WAN address), so it asks the answer index about each distinct
+// destination once, then reads the connections to the ones that match.
+// Asking per connection repeated the same question ~150k times a week;
+// starting from the answers means matching every reply by suffix.
 func (s *Store) ConnsForDomain(domain string, since time.Time) ([]ConnStat, error) {
-	return s.conns(`SELECT client_ip, dst_ip, dst_port, proto, action, count(*), min(ts), max(ts) FROM connections c
-		WHERE ts >= ?2 AND EXISTS (SELECT 1 FROM dns_replies INDEXED BY dns_replies_answer_ts
-			WHERE answer = c.dst_ip AND `+domainMatch+`)
+	return s.conns(`WITH dsts AS (SELECT DISTINCT dst_ip FROM connections WHERE ts >= ?2),
+		hit AS (SELECT dst_ip FROM dsts WHERE EXISTS (SELECT 1 FROM dns_replies INDEXED BY dns_replies_answer_ts
+			WHERE answer = dsts.dst_ip AND `+domainMatch+`))
+		SELECT client_ip, dst_ip, dst_port, proto, action, count(*), min(ts), max(ts) FROM connections
+		WHERE dst_ip IN (SELECT dst_ip FROM hit) AND ts >= ?2
 		GROUP BY 1,2,3,4,5 ORDER BY 6 DESC`, domain, fmtTime(since))
 }
 
