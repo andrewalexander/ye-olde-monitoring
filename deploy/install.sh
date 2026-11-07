@@ -39,13 +39,14 @@ if [ ! -f "$ENV" ]; then
 fi
 
 # Units.
-for u in dnscount-serve.service dnscount-caddy-log.service dnscount-syslog.service dnscount-backup.service dnscount-backup.timer; do
+for u in dnscount-serve.service dnscount-caddy-log.service dnscount-syslog.service dnscount-backup.service dnscount-backup.timer \
+	dnscount-explore.service dnscount-feeds.service dnscount-feeds.timer; do
 	install -m 0644 "$SRC/systemd/$u" /etc/systemd/system/$u
 done
 systemctl daemon-reload
-systemctl enable --quiet dnscount-serve.service dnscount-backup.timer
-systemctl restart dnscount-serve.service
-systemctl start dnscount-backup.timer
+systemctl enable --quiet dnscount-serve.service dnscount-backup.timer dnscount-explore.service dnscount-feeds.timer
+systemctl restart dnscount-serve.service dnscount-explore.service
+systemctl start dnscount-backup.timer dnscount-feeds.timer
 
 # (Not sourced: values are systemd-style, unquoted with spaces.)
 caddy_log=$(sed -n 's/^DNSCOUNT_CADDY_LOG=//p' "$ENV" | tail -1)
@@ -73,7 +74,8 @@ if systemctl is-active --quiet dnscount-serve.service; then
 	echo
 	echo "dnscount-serve is running. Quick checks on this host:"
 	echo "  curl -s 'http://127.0.0.1:8080/counter.txt?site=test'"
-	echo "  curl -s http://127.0.0.1:8081/api/health"
+	echo "  curl -s http://127.0.0.1:8081/api/health      # breaker stats"
+	echo "  curl -s http://127.0.0.1:8090/api            # the explorer's API (LAN UI: deploy/Caddyfile.example)"
 	echo "  sudo -u dnscount env DNSCOUNT_DB=/var/lib/dnscount/dnscount.db dnscount report hits -top ip"
 	echo "  sudo grep DNSCOUNT_TOKEN $ENV    # token for RemoteSink"
 else

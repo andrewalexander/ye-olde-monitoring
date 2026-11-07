@@ -73,7 +73,7 @@ in
   imports = [ ./guard.nix ];
 
   options.services.dnscount = {
-    enable = mkEnableOption "dnscount (counter, /ingest and the admin API)";
+    enable = mkEnableOption "dnscount (counter, /ingest and the localhost health endpoint)";
 
     package = mkOption {
       type = types.package;
@@ -109,7 +109,7 @@ in
       adminAddr = mkOption {
         type = types.str;
         default = "127.0.0.1:8081";
-        description = "Admin API listener. It has no auth: keep it on localhost.";
+        description = "Admin listener (/api/health: breaker stats). It has no auth: keep it on localhost.";
       };
       extraArgs = mkOption {
         type = types.listOf types.str;
@@ -330,7 +330,7 @@ in
     ];
 
     systemd.services.dnscount-serve = {
-      description = "dnscount hit counter, /ingest collector and admin API";
+      description = "dnscount hit counter and /ingest collector";
       wants = [ "network-online.target" ];
       after = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];

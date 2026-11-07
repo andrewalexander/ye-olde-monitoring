@@ -1,5 +1,5 @@
 [Unit]
-Description=dnscount hit counter, /ingest collector and admin API
+Description=dnscount hit counter and /ingest collector
 Wants=network-online.target
 After=network-online.target
 

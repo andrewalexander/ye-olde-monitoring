@@ -57,7 +57,7 @@ services.caddy.virtualHosts."example.com".logFormat = config.services.dnscount.c
 make deploy HOST=you@homeserver            # ARCH=arm64 for a Pi / ARM box
 ```
 
-This runs the tests, cross-compiles a static Linux binary, copies it with `deploy/` to the host, and runs `deploy/install.sh` under sudo on the target server. Running it again upgrades. The installer creates a `dnscount` system user (in the `caddy` group), and writes `/etc/dnscount/dnscount.env` with a random `/ingest` token on first install only. It also installs hardened units: `dnscount-serve`, `dnscount-caddy-log`, and a daily `dnscount-backup.timer` that keeps 7 copies. For Caddy, add the marked blocks from `deploy/Caddyfile.example` to each site.
+This runs the tests, cross-compiles a static Linux binary, copies it with `deploy/` to the host, and runs `deploy/install.sh` under sudo on the target server. Running it again upgrades. The installer creates a `dnscount` system user (in the `caddy` group), and writes `/etc/dnscount/dnscount.env` with a random `/ingest` token on first install only. It also installs hardened units: `dnscount-serve`, `dnscount-caddy-log`, `dnscount-explore` (on 127.0.0.1:8090), an hourly `dnscount-feeds.timer`, and a daily `dnscount-backup.timer` that keeps 7 copies. For Caddy, add the marked blocks from `deploy/Caddyfile.example` to each site, and its LAN-only block for the explorer.
 
 ```sh
 alias dnscount='sudo -u dnscount env DNSCOUNT_DB=/var/lib/dnscount/dnscount.db dnscount'
@@ -183,7 +183,7 @@ dnscount check                               # data sanity checks
 3. `report bans -since 7d`: is there a `LEAK`?
 4. `report hits -new ip -site <site> -since 24h`: who is new?
 
-The admin API (`127.0.0.1:8081`) serves the same data as JSON. `GET /api` there is a plain-text reference for every endpoint (from `internal/server/api.txt`).
+The explorer serves the same data as JSON; `GET /api` there is a plain-text reference for every endpoint (from `internal/explore/api.txt`). `dnscount serve`'s localhost admin listener (`127.0.0.1:8081`) only answers `/api/health`: the live breaker stats.
 
 ### The explorer
 
@@ -191,12 +191,14 @@ The admin API (`127.0.0.1:8081`) serves the same data as JSON. `GET /api` there 
 
 | View | What it's for |
 |---|---|
+| **Overview** | Health at a glance, indicators indexed, how many are flagged |
 | **Flagged** | Every listed IP or domain seen: **in** (it reached us), **out** (the LAN reached it) or **both**, with the LAN devices involved |
 | **Inbound IPs** | Everyone who hit us, got banned, raised an alert, tripped a breaker or had a login refused, with AS, country and lists; worst first |
 | **Domains** | What the LAN looked up: listed names, names that resolved to listed addresses, new names |
 | **LAN clients** | Each device and how many flagged names it looked up |
-| **IP and domain pages** | Everything about one indicator: lists (including ones it dropped off), hits, bans, alerts, who asked |
-| **Health** | WAL size, pressure, per-unit CPU and memory, query times, feed freshness, data checks, breakers |
+| **Hits, Bans, Alerts, Trips** | The raw records, newest first, each with what's known about its address; a trip opens everything recorded when it tripped |
+| **IP and domain pages** | Everything about one indicator: lists (including ones it dropped off), hits, bans, alerts, who asked. A LAN address's page also has its device, sightings and what it looked up |
+| **Health** | WAL size, pressure, per-unit CPU and memory, query times, feed freshness, row counts, data checks, breakers |
 
 Its API is documented in `internal/explore/api.txt`.
 
@@ -246,7 +248,8 @@ The explorer reads the live database. In WAL mode, readers never block writers, 
 |---|---|---|
 | counter | none | 30/min per IP |
 | `POST /ingest` | `Authorization: Bearer <token>` (`-token` or `$DNSCOUNT_TOKEN`) | 1 MB body, 1000 hits/batch, 600 req/min, 10 bad/min per IP |
-| admin API | none; it only listens on localhost (use an SSH tunnel) | none |
+| admin listener (`/api/health`) | none; it only listens on localhost | none |
+| explorer | none; keep it LAN-only (Caddy) | per-request query deadline |
 | syslog | source-IP allowlist (`-allow`, required) | 60k lines/min per source; trips if >50% of lines are malformed |
 
 `/ingest` answers `400` for bad JSON or an invalid hit (the whole batch is rejected), `401` for a missing or wrong token, `413` when the body is too large, and `429` with `Retry-After` only once that IP has tripped the breaker.

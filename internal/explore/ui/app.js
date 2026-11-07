@@ -787,7 +787,7 @@ async function renderHealth() {
   table(main, h.lookups || [], [col("Provider", "provider"), col("Units, last 24h", "units_24h", "num"),
     col("Units this month", "units_month", "num"), col("Cached answers", "cached", "num"),
     col("Last request", "last_request", "time"), col("Last error", "last_error"), col("Error at", "last_error_at", "time")], { pagination: false });
-  main.append(el("h2", { text: "Breakers (live admin API)" }));
+  main.append(el("h2", { text: "Breakers (live, from dnscount serve)" }));
   if (h.admin_error) main.append(el("p", { class: "error", text: h.admin_error }));
   table(main, h.breakers || [], [col("Name", "name"), col("Trips", "trips", "num"), col("Suppressed", "suppressed", "num"),
     col("Tripped now", "tripped_now", "num"), col("Keys", "keys", "num")], { pagination: false });

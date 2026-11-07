@@ -43,7 +43,7 @@ self:
     machine.succeed("curl -sf 'http://127.0.0.1:8080/counter.txt?site=vm' | grep -x 1")
     machine.succeed("curl -sf http://127.0.0.1:8081/api/health")
 
-    # The admin API must not listen beyond localhost.
+    # The admin listener must not listen beyond localhost.
     machine.fail("ss -ltnH | awk '{print $4}' | grep -E ':8081$' | grep -v '^127.0.0.1:'")
 
     machine.wait_for_unit("dnscount-syslog.service")

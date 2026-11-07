@@ -34,6 +34,19 @@ example.com {
 	file_server
 }
 
+# --- dnscount explorer: LAN only ---------------------------------------------
+# dnscount-explore.service listens on 127.0.0.1:8090 and has no auth, so give
+# it its own port that only the LAN reaches. Don't forward this port on the
+# router, and never put it on a public site.
+#
+# :8082 {
+# 	@lan remote_ip private_ranges
+# 	handle @lan {
+# 		reverse_proxy 127.0.0.1:8090
+# 	}
+# 	respond 403
+# }
+
 # Caddy rewrites X-Forwarded-For itself (it ignores client-supplied values
 # unless you configure trusted_proxies), so dnscount trusting 127.0.0.1
 # yields the real visitor IP.

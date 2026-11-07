@@ -63,7 +63,7 @@ func exploreCmd(args []string) error {
 	maxConns := fs.Int("max-conns", 4, "most queries running at once")
 	matchEvery := fs.Duration("match-every", 10*time.Minute, "how often new indicators are indexed and matched")
 	window := fs.Duration("window", 90*24*time.Hour, "how far back a changed list re-checks indicators")
-	adminURL := fs.String("admin-url", "http://127.0.0.1:8081", "the live admin API, for breaker stats (empty: skip)")
+	adminURL := fs.String("admin-url", "http://127.0.0.1:8081", "serve's admin listener, for live breaker stats (empty: skip)")
 	units := fs.String("units", "dnscount-serve,dnscount-syslog,dnscount-caddy-log,dnscount-fail2ban,dnscount-explore",
 		"systemd units whose cgroup CPU, memory and pressure the Health view shows")
 	cgroups := fs.String("cgroup-root", "/sys/fs/cgroup/system.slice", "where the units' cgroups are")
