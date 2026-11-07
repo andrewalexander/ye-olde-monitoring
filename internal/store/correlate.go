@@ -637,8 +637,7 @@ func (s *Store) Flagged(q FlaggedQuery) ([]FlaggedRow, error) {
 		rows, err := s.query(`SELECT i.indicator, i.kind, i.roles, i.first_seen, i.last_seen,
 				max(CASE e.verdict WHEN 'malicious' THEN 3 WHEN 'suspicious' THEN 2 ELSE 1 END) AS rank
 			FROM enrich.enrichment e JOIN enrich.indicators i ON i.indicator = e.indicator
-			WHERE e.current = 1 AND e.method = 'downloaded' AND i.last_seen >= ? AND e.verdict IN (`+in+`)
-			  AND i.indicator NOT IN (SELECT ip FROM enrich.lan_clients)
+			WHERE `+listedNotLAN+` AND i.last_seen >= ? AND e.verdict IN (`+in+`)
 			GROUP BY i.indicator`, append([]any{since}, listedArgs...)...)
 		if err != nil {
 			return nil, err
@@ -977,4 +976,64 @@ func (s *Store) nameCounts(cs []ClientCount) error {
 		cs[i].Name = dev[cs[i].IP].Name
 	}
 	return err
+}
+
+// listedNotLAN is what makes an enrichment row count as flagged, alongside
+// its verdict: a current downloaded-list match on something that isn't a
+// LAN device. Reserved addresses are filtered in Go (enrich.Reserved).
+const listedNotLAN = `e.current = 1 AND e.method = 'downloaded'
+	AND e.indicator NOT IN (SELECT ip FROM enrich.lan_clients)`
+
+// Overview is the explorer's landing page numbers.
+type Overview struct {
+	// Tables is rows (all time) and last_24h, by table.
+	Tables     map[string]map[string]int64
+	Indicators int64
+	// Flagged counts indicators as the Flagged view does: listed malicious
+	// or suspicious, not a LAN device, not reserved.
+	Flagged int64
+}
+
+func (s *Store) Overview(now time.Time) (Overview, error) {
+	o := Overview{Tables: map[string]map[string]int64{}}
+	day := fmtTime(now.Add(-24 * time.Hour))
+	for _, t := range []struct{ table, ts string }{
+		{"hits", "ts"}, {"dns_queries", "ts"}, {"dns_replies", ""}, {"connections", ""},
+		{"ids_alerts", "ts"}, {"bans", "ts"}, {"breaker_trips", "tripped_at"}, {"auth_failures", "ts"},
+	} {
+		c := map[string]int64{}
+		var rows int64
+		// Rows are never deleted, so the largest id is the row count without a scan.
+		if err := s.queryRow(`SELECT coalesce(max(id), 0) FROM ` + t.table).Scan(&rows); err != nil {
+			return o, err
+		}
+		c["rows"] = rows
+		if t.ts != "" {
+			var n int64
+			if err := s.queryRow(`SELECT count(*) FROM `+t.table+` WHERE `+t.ts+` >= ?`, day).Scan(&n); err != nil {
+				return o, err
+			}
+			c["last_24h"] = n
+		}
+		o.Tables[t.table] = c
+	}
+	if err := s.queryRow(`SELECT count(*) FROM enrich.indicators`).Scan(&o.Indicators); err != nil {
+		return o, err
+	}
+	rows, err := s.query(`SELECT DISTINCT e.indicator FROM enrich.enrichment e
+		WHERE ` + listedNotLAN + ` AND e.verdict IN ('malicious','suspicious')`)
+	if err != nil {
+		return o, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ind string
+		if err := rows.Scan(&ind); err != nil {
+			return o, err
+		}
+		if !enrich.Reserved(ind) {
+			o.Flagged++
+		}
+	}
+	return o, rows.Err()
 }

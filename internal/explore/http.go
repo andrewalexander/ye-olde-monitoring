@@ -41,70 +41,19 @@ func (x *Explorer) Handler() http.Handler {
 			return st.TopAlerts(by, f)
 		}
 		alerts, err := st.Alerts(f)
-		if err != nil {
-			return nil, err
-		}
-		intel, err := st.Intel(keys(alerts, func(a store.Alert) string { return a.SrcIP }), false)
-		type row struct {
-			store.Alert
-			*store.Intel
-		}
-		out := make([]row, len(alerts))
-		for i, a := range alerts {
-			out[i] = row{a, intel[a.SrcIP]}
-		}
-		return out, err
+		return withIntel(st, alerts, err, func(a store.Alert) string { return a.SrcIP })
 	})
 	routes["GET /api/bans"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
 		bans, err := st.Bans(p.BanFilter(), x.cfg.Now())
-		if err != nil {
-			return nil, err
-		}
-		intel, err := st.Intel(keys(bans, func(b store.Ban) string { return b.IP }), false)
-		type row struct {
-			store.Ban
-			*store.Intel
-		}
-		out := make([]row, len(bans))
-		for i, b := range bans {
-			out[i] = row{b, intel[b.IP]}
-		}
-		return out, err
+		return withIntel(st, bans, err, func(b store.Ban) string { return b.IP })
 	})
-
-	// Hits and trips get the same per-address intel (lists, AS, bans_30d).
 	routes["GET /api/hits"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
-		hits, err := st.Hits(store.HitFilter{Site: p.Str("site"), IP: p.Str("ip"), Status: p.Str("status"),
-			Since: p.Since(), Limit: p.Int("limit")})
-		if err != nil {
-			return nil, err
-		}
-		intel, err := st.Intel(keys(hits, func(h hit.Hit) string { return h.ClientIP }), false)
-		type row struct {
-			hit.Hit
-			*store.Intel
-		}
-		out := make([]row, len(hits))
-		for i, x := range hits {
-			out[i] = row{x, intel[x.ClientIP]}
-		}
-		return out, err
+		hits, err := st.Hits(p.HitFilter())
+		return withIntel(st, hits, err, func(h hit.Hit) string { return h.ClientIP })
 	})
 	routes["GET /api/trips"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
-		trips, err := st.Trips(store.TripFilter{Since: p.Since(), Key: p.Str("ip"), Breaker: p.Str("breaker"), Limit: p.Int("limit")})
-		if err != nil {
-			return nil, err
-		}
-		intel, err := st.Intel(keys(trips, func(t store.Trip) string { return t.Key }), false)
-		type row struct {
-			store.Trip
-			*store.Intel
-		}
-		out := make([]row, len(trips))
-		for i, x := range trips {
-			out[i] = row{x, intel[x.Key]}
-		}
-		return out, err
+		trips, err := st.Trips(p.TripFilter())
+		return withIntel(st, trips, err, func(t store.Trip) string { return t.Key })
 	})
 
 	list := func(p *server.Params) store.ListQuery {
@@ -207,6 +156,45 @@ func secure(h http.Handler) http.Handler {
 	})
 }
 
+// withIntel adds what's known about each row's address (lists, AS,
+// bans_30d) to the row's own JSON fields.
+func withIntel[T any](st *store.Store, rows []T, err error, key func(T) string) ([]json.RawMessage, error) {
+	if err != nil {
+		return nil, err
+	}
+	intel, err := st.Intel(keys(rows, key), false)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]json.RawMessage, len(rows))
+	for i, r := range rows {
+		if out[i], err = mergeJSON(r, intel[key(r)]); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// mergeJSON encodes a and b as objects and joins their fields; a nil b adds
+// nothing. It's what embedding both in one struct did, for any row type.
+func mergeJSON(a any, b *store.Intel) (json.RawMessage, error) {
+	ja, err := json.Marshal(a)
+	if err != nil || b == nil {
+		return ja, err
+	}
+	jb, err := json.Marshal(b)
+	if err != nil {
+		return nil, err
+	}
+	if len(jb) <= 2 { // {}
+		return ja, nil
+	}
+	if len(ja) <= 2 {
+		return jb, nil
+	}
+	return append(append(ja[:len(ja)-1:len(ja)-1], ','), jb[1:]...), nil
+}
+
 func keys[T any](rows []T, f func(T) string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -273,57 +261,14 @@ func (x *Explorer) feedStatus(ctx context.Context) ([]FeedStatus, error) {
 }
 
 func (x *Explorer) overview(st *store.Store) (map[string]any, error) {
-	counts := map[string]map[string]int64{}
-	day := store.FormatTime(x.cfg.Now().Add(-24 * time.Hour))
-	for _, t := range []struct{ table, ts string }{
-		{"hits", "ts"}, {"dns_queries", "ts"}, {"dns_replies", ""}, {"connections", ""},
-		{"ids_alerts", "ts"}, {"bans", "ts"}, {"breaker_trips", "tripped_at"}, {"auth_failures", "ts"},
-	} {
-		c := map[string]int64{}
-		var rows int64
-		// Rows are never deleted, so the largest id is the row count without a scan.
-		if err := st.DB().QueryRowContext(st.Context(), `SELECT coalesce(max(id), 0) FROM `+t.table).Scan(&rows); err != nil {
-			return nil, err
-		}
-		c["rows"] = rows
-		if t.ts != "" {
-			var n int64
-			if err := st.DB().QueryRowContext(st.Context(), `SELECT count(*) FROM `+t.table+` WHERE `+t.ts+` >= ?`, day).Scan(&n); err != nil {
-				return nil, err
-			}
-			c["last_24h"] = n
-		}
-		counts[t.table] = c
-	}
-	var inds, flagged int64
-	if err := st.DB().QueryRowContext(st.Context(), `SELECT count(*) FROM enrich.indicators`).Scan(&inds); err != nil {
-		return nil, err
-	}
-	// Flagged as the Flagged view counts it: listed malicious or suspicious,
-	// not a LAN device, not a reserved address.
-	rows, err := st.DB().QueryContext(st.Context(), `SELECT DISTINCT indicator FROM enrich.enrichment
-		WHERE current = 1 AND method = 'downloaded' AND verdict IN ('malicious','suspicious')
-		AND indicator NOT IN (SELECT ip FROM enrich.lan_clients)`)
+	o, err := st.Overview(x.cfg.Now())
 	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var ind string
-		if err := rows.Scan(&ind); err != nil {
-			return nil, err
-		}
-		if !enrich.Reserved(ind) {
-			flagged++
-		}
-	}
-	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	x.statusMu.Lock()
 	status := x.status
 	x.statusMu.Unlock()
-	return map[string]any{"tables": counts, "indicators": inds, "flagged": flagged, "loops": status}, nil
+	return map[string]any{"tables": o.Tables, "indicators": o.Indicators, "flagged": o.Flagged, "loops": status}, nil
 }
 
 func (x *Explorer) health(ctx context.Context) (map[string]any, error) {

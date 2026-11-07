@@ -98,6 +98,16 @@ func TestExplorerEndToEnd(t *testing.T) {
 	if strings.Contains(body, "<script>") || !strings.Contains(body, "\\u003cscript\\u003e") {
 		t.Errorf("hit path not escaped: %s", body)
 	}
+	// The hit carries its address's intel alongside its own fields.
+	var hits []map[string]any
+	json.Unmarshal([]byte(body), &hits)
+	if len(hits) != 1 || hits[0]["client_ip"] != "203.0.113.66" || hits[0]["verdict"] != "malicious" {
+		t.Errorf("hit without intel: %s", body)
+	}
+	_, body = get(t, h, "/api/overview")
+	if !strings.Contains(body, `"flagged": 1`) || !strings.Contains(body, `"hits"`) {
+		t.Errorf("overview = %s", body)
+	}
 
 	_, body = get(t, h, "/api/flagged")
 	var fl []struct {

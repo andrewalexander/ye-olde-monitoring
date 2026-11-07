@@ -66,7 +66,7 @@ type HandlerFunc func(st *store.Store, r *http.Request, p *Params) (any, error)
 func ReadRoutes(rc RouteConfig) map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
 		"GET /api/hits": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
-			return st.Hits(store.HitFilter{Site: p.Str("site"), IP: p.Str("ip"), Status: p.Str("status"), Since: p.Since(), Limit: p.Int("limit")})
+			return st.Hits(p.HitFilter())
 		}),
 		"GET /api/dns": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
 			c := p.Str("client")
@@ -86,7 +86,7 @@ func ReadRoutes(rc RouteConfig) map[string]http.HandlerFunc {
 			return st.Bans(p.BanFilter(), rc.Now())
 		}),
 		"GET /api/trips": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
-			return st.Trips(store.TripFilter{Since: p.Since(), Key: p.Str("ip"), Breaker: p.Str("breaker"), Limit: p.Int("limit")})
+			return st.Trips(p.TripFilter())
 		}),
 		"GET /api/trips/{id}": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
 			id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -168,6 +168,14 @@ func (p *Params) SinceOr(def string) time.Time {
 		p.err = ErrBadParam(err.Error())
 	}
 	return t
+}
+
+func (p *Params) HitFilter() store.HitFilter {
+	return store.HitFilter{Site: p.Str("site"), IP: p.Str("ip"), Status: p.Str("status"), Since: p.Since(), Limit: p.Int("limit")}
+}
+
+func (p *Params) TripFilter() store.TripFilter {
+	return store.TripFilter{Since: p.Since(), Key: p.Str("ip"), Breaker: p.Str("breaker"), Limit: p.Int("limit")}
 }
 
 func (p *Params) AlertFilter() store.AlertFilter {
