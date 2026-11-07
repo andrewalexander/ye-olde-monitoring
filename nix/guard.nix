@@ -20,6 +20,7 @@ let
   notFoundSkip = lib.optionalString (cfg.notFoundIgnore != [ ])
     "(?!/(?i:${concatStringsSep "|" cfg.notFoundIgnore})/)";
   notFoundRegex = ''"client_ip":"<HOST>",.*?"uri":"${notFoundSkip}[^"]*",.*"status":404\b'';
+  unauthorizedRegex = ''"client_ip":"<HOST>",.*"status":401\b'';
 
   # dnscount logs this when a breaker trips (forensics.TripLine; a Go test
   # reads this line, so keep it on one line).
@@ -73,7 +74,7 @@ in
     guard = {
       enable = mkEnableOption ''
         fail2ban jails over Caddy's access log: paths no real client asks for
-        (`caddy-probe`), and bursts of 404s (`caddy-404`); and over dnscount's
+        (`caddy-probe`), and bursts of 404s (`caddy-404`) or 401s (`caddy-401`); and over dnscount's
         journal: any address that trips a breaker (`dnscount-trip`). Repeat offenders get
         longer bans, across all jails. With an HTTP-proxy VPS in front, the
         firewall here only sees the VPS, so a ban would block everyone: ban on
@@ -184,6 +185,15 @@ in
         # The looser of the two signals, so a shorter ban.
         caddy-404 = caddyJail {
           failregex = notFoundRegex;
+          maxretry = 20;
+          findtime = "10m";
+          bantime = "1h";
+        };
+        # Token guessing and unauthenticated scraping. An app's own log often
+        # has no address for these (Jellyfin logs "Invalid token" without one),
+        # but Caddy's does. A client with an expired token gets a few, not 20.
+        caddy-401 = caddyJail {
+          failregex = unauthorizedRegex;
           maxretry = 20;
           findtime = "10m";
           bantime = "1h";
