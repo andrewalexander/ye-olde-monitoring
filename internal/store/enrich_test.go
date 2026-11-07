@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -568,5 +569,43 @@ func TestAuthFailuresInbound(t *testing.T) {
 	}
 	if roles&store.RoleAuthFail == 0 {
 		t.Errorf("roles = %b, want RoleAuthFail", roles)
+	}
+}
+
+// The domain page's lookups come from the index plus the not-yet-indexed
+// tail, and must match the full scan exactly.
+func TestDomainProfileLookupsMatchScan(t *testing.T) {
+	x := openExplorer(t)
+	q := func(hash, client, domain string, ts time.Time) ingest.Record {
+		return ingest.Record{Query: &ingest.DNSQuery{Hash: hash, TS: ts, ClientIP: client, Domain: domain, Source: "test"}}
+	}
+	x.primary.InsertRecords([]ingest.Record{
+		q("1", "192.168.1.20", "example.com", now.Add(-time.Hour)),
+		q("2", "192.168.1.20", "a.example.com", now.Add(-time.Hour)),
+		q("3", "192.168.1.21", "b.a.example.com", now.Add(-2*time.Hour)),
+		q("4", "192.168.1.22", "notexample.com", now.Add(-time.Hour)),   // not a subdomain
+		q("5", "192.168.1.23", "x.example.com", now.AddDate(0, 0, -40)), // before the window
+		q("6", "192.168.1.20", "printer.lan", now.Add(-time.Hour)),
+		q("7", "192.168.1.21", "ipp.printer.lan", now.Add(-time.Hour)),
+	})
+	x.index(t)
+	// Looked up after the last index pass: only the tail finds it.
+	x.primary.InsertRecords([]ingest.Record{q("8", "192.168.1.24", "new.example.com", now)})
+	since := now.AddDate(0, 0, -30)
+	for _, d := range []string{"example.com", "a.example.com", "printer.lan"} {
+		want, err := x.ro.DNSByDomain(d, since)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := x.ro.DomainProfile(d, since)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fmt.Sprint(p.Lookups) != fmt.Sprint(want) {
+			t.Errorf("%s:\n got %+v\nwant %+v", d, p.Lookups, want)
+		}
+	}
+	if p, _ := x.ro.DomainProfile("example.com", since); len(p.Lookups) != 3 {
+		t.Errorf("example.com: %d clients, want 3 (20, 21, 24)", len(p.Lookups))
 	}
 }

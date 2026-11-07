@@ -240,8 +240,13 @@ type ClientLookups struct {
 // DNSByDomain: which clients looked up domain (or a subdomain), how many
 // times, first and last.
 func (s *Store) DNSByDomain(domain string, since time.Time) ([]ClientLookups, error) {
+	return s.clientLookups(domainMatch+` AND ts >= ?2`, domain, fmtTime(since))
+}
+
+// clientLookups groups the dns_queries rows matching where by client.
+func (s *Store) clientLookups(where string, args ...any) ([]ClientLookups, error) {
 	rows, err := s.query(`SELECT client_ip, max(client_name), count(*), min(ts), max(ts) FROM dns_queries
-		WHERE `+domainMatch+` AND ts >= ?2 GROUP BY client_ip ORDER BY 3 DESC, 1`, domain, fmtTime(since))
+		WHERE `+where+` GROUP BY client_ip ORDER BY 3 DESC, 1`, args...)
 	if err != nil {
 		return nil, err
 	}

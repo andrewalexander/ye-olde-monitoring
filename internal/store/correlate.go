@@ -924,7 +924,7 @@ func (s *Store) DomainProfile(d string, since time.Time) (DomainProfile, error) 
 		return p, err
 	}
 	p.Intel = intel[norm]
-	if p.Lookups, err = s.DNSByDomain(d, since); err != nil {
+	if p.Lookups, err = s.indexedLookups(d, since); err != nil {
 		return p, err
 	}
 	if p.Connections, err = s.ConnsForDomain(d, since); err != nil {
