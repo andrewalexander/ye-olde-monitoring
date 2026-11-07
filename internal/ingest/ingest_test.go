@@ -236,6 +236,21 @@ func TestWrongFormatGuard(t *testing.T) {
 	}
 }
 
+// A whole syslog stream is mostly other daemons' lines; Unguard reads on.
+func TestUnguardReadsPastTheGuard(t *testing.T) {
+	var b strings.Builder
+	for range ingest.GuardLines + 10 {
+		b.WriteString("<30>Nov  6 00:00:01 router ubios-udapi-server[1]: some chatter\n")
+	}
+	b.WriteString("<30>Oct 27 12:00:01 UDM dnsmasq[123]: query[A] example.com from 192.168.1.20\n")
+	var got int
+	st, err := ingest.Run(strings.NewReader(b.String()), ingest.Unguard(ingest.Multi{dns.Dnsmasq{}}), now,
+		func(ingest.Record) error { got++; return nil })
+	if err != nil || got != 1 || st.Skipped != ingest.GuardLines+10 {
+		t.Errorf("got %d records, %+v, %v; want the one query after the chatter", got, st, err)
+	}
+}
+
 func TestDeduperIsDeterministic(t *testing.T) {
 	lines := []string{"a", "b", "a", "a", "<30>b"}
 	keys := func() []string {

@@ -141,6 +141,14 @@ type LineParser interface {
 // would misfire.
 type Unguarded interface{ Unguarded() }
 
+// Unguard marks p as Unguarded: for whole syslog streams (the syslog -raw
+// files), where most lines are other daemons' and skipped on purpose.
+func Unguard(p LineParser) LineParser { return unguarded{p} }
+
+type unguarded struct{ LineParser }
+
+func (unguarded) Unguarded() {}
+
 // Stats summarizes a run over a log.
 type Stats struct {
 	Lines, Records, Skipped, Bad int

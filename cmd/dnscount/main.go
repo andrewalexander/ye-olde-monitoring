@@ -248,7 +248,8 @@ func ingestDNS(args []string) error {
 	case "dnsmasq", "pihole":
 		p = dns.Dnsmasq{}
 	case "unifi":
-		p = ingest.Multi{dns.Dnsmasq{}, fw.IPTables{}, ids.UniFi{}, lan.DHCP{}, lan.Neighbours{}}
+		// A raw syslog file is mostly lines no parser here wants.
+		p = ingest.Unguard(ingest.Multi{dns.Dnsmasq{}, fw.IPTables{}, ids.UniFi{}, lan.DHCP{}, lan.Neighbours{}})
 	case "adguard":
 		p = dns.AdGuard{}
 	default:
