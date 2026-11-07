@@ -112,9 +112,11 @@ in
           # dot-directories (.env, .git, .aws)
           ''/\.(?!well-known/)''
           # server-side scripts and config files
-          ''\.(?:php\d?|phtml|cgi|pl|aspx?|axd|jsp|action|env|ini|ya?ml|toml|tfstate|tfvars|hcl|sql|bak|old|sh|py|rb|cfg|conf|properties|secret|key|md)(?=[/"?]|$)''
+          ''\.(?:php\d?|phtml|cgi|pl|aspx?|axd|jsp|action|env|ini|ya?ml|toml|tfstate|tfvars|hcl|sql|bak|old|sh|py|rb|cfg|conf|properties|secret|key|md|log|dist)(?=[/"?]|$)''
+          # cloud and app credential files (not config.json: Jellyfin's web client loads one)
+          ''/(?:aws|appsettings[^/"?]*|credentials|secrets?)\.json''
           # admin panels and framework debug endpoints
-          ''wp-|phpmyadmin|cgi-bin|webmin|actuator|_profiler|server-status|telescope|@vite|/vendor/''
+          ''wp-|phpmyadmin|phpinfo|cgi-bin|webmin|actuator|_profiler|server-status|telescope|@vite|/vendor/''
           # path traversal
           ''%%2e|%%5c|\.\.''
           ''/(?:etc|proc|root|var/task)/''
