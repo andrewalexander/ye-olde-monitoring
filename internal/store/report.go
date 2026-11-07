@@ -336,9 +336,15 @@ type ConnStat struct {
 
 // ConnsForDomain joins answers for domain to connections that went to those
 // addresses: "looked it up, then actually connected".
+//
+// It starts from the connections in the window, which are few (only logged
+// rules), and asks the answer index whether domain resolved to each one's
+// destination. Starting from the answers instead means matching every reply
+// by suffix, which reads all of dns_replies.
 func (s *Store) ConnsForDomain(domain string, since time.Time) ([]ConnStat, error) {
-	return s.conns(`SELECT client_ip, dst_ip, dst_port, proto, action, count(*), min(ts), max(ts) FROM connections
-		WHERE dst_ip IN (SELECT DISTINCT answer FROM dns_replies WHERE `+domainMatch+`) AND ts >= ?2
+	return s.conns(`SELECT client_ip, dst_ip, dst_port, proto, action, count(*), min(ts), max(ts) FROM connections c
+		WHERE ts >= ?2 AND EXISTS (SELECT 1 FROM dns_replies INDEXED BY dns_replies_answer_ts
+			WHERE answer = c.dst_ip AND `+domainMatch+`)
 		GROUP BY 1,2,3,4,5 ORDER BY 6 DESC`, domain, fmtTime(since))
 }
 

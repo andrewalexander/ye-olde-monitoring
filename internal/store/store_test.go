@@ -2,8 +2,10 @@ package store_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -375,5 +377,58 @@ func TestGroupRanks(t *testing.T) {
 	}
 	if _, err := st.DNSTop(store.GroupQuery{By: "domain", Rank: "sideways"}); !errors.As(err, &bad) {
 		t.Errorf("bad rank = %v", err)
+	}
+}
+
+// ConnsForDomain starts from the connections now; it must find exactly what
+// the old answers-first query found.
+func TestConnsForDomainMatchesAnswersFirst(t *testing.T) {
+	st := open(t)
+	rep := func(h, d, a string, ts time.Time) ingest.Record {
+		return ingest.Record{Reply: &ingest.DNSReply{Hash: h, TS: ts, Domain: d, Answer: a, Status: "reply", Source: "test"}}
+	}
+	conn := func(h, src, dst string, port int, ts time.Time) ingest.Record {
+		return ingest.Record{Conn: &ingest.Conn{Hash: h, TS: ts, ClientIP: src, DstIP: dst, DstPort: port, Proto: "tcp", Action: "accept", Source: "test"}}
+	}
+	st.InsertRecords([]ingest.Record{
+		rep("r1", "example.com", "203.0.113.1", now.AddDate(0, 0, -60)), // resolved long ago still counts
+		rep("r2", "cdn.example.com", "203.0.113.2", now),
+		rep("r3", "notexample.com", "203.0.113.3", now),
+		rep("r4", "example.com", "", now), // a blocked reply has no answer
+		conn("c1", "192.168.1.20", "203.0.113.1", 443, now),
+		conn("c2", "192.168.1.21", "203.0.113.2", 443, now),
+		conn("c3", "192.168.1.21", "203.0.113.2", 443, now.Add(-time.Minute)),
+		conn("c4", "192.168.1.22", "203.0.113.3", 443, now),                    // other domain
+		conn("c5", "192.168.1.23", "203.0.113.1", 443, now.AddDate(0, 0, -40)), // before the window
+		conn("c6", "198.51.100.9", "172.16.0.10", 443, now),                    // a port forward
+	})
+	since := now.AddDate(0, 0, -30)
+	got, err := st.ConnsForDomain("example.com", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const old = `SELECT client_ip, dst_ip, dst_port, proto, action, count(*), min(ts), max(ts) FROM connections
+		WHERE dst_ip IN (SELECT DISTINCT answer FROM dns_replies WHERE (domain = ?1 OR (length(domain) > length(?1) AND substr(domain, -length(?1)-1) = '.' || ?1))) AND ts >= ?2
+		GROUP BY 1,2,3,4,5 ORDER BY 6 DESC, 1`
+	rows, err := st.DB().Query(old, "example.com", store.FormatTime(since))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []string
+	for rows.Next() {
+		var c, d, p, a, f, l string
+		var port, n int
+		rows.Scan(&c, &d, &port, &p, &a, &n, &f, &l)
+		want = append(want, fmt.Sprintf("%s>%s:%d x%d", c, d, port, n))
+	}
+	rows.Close()
+	var have []string
+	for _, c := range got {
+		have = append(have, fmt.Sprintf("%s>%s:%d x%d", c.ClientIP, c.DstIP, c.DstPort, c.Count))
+	}
+	slices.Sort(want)
+	slices.Sort(have)
+	if fmt.Sprint(have) != fmt.Sprint(want) || len(have) != 2 {
+		t.Errorf("got %v, want %v (two rows)", have, want)
 	}
 }
