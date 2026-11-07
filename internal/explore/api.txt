@@ -47,7 +47,10 @@ Shared with the admin API (alerts and bans gain the fields above):
 /api/ip/{ip}?[since=30d]
   One address: intel with every list row ("matches", including lists it
   dropped off), all-time counts, recent hits, bans, alerts, trips and
-  refused logins ("auth_failures": [{"ts","source","ip","user"}]), the
+  refused logins ("auth_failures": [{"ts","source","ip","user"}]), router
+  firewall lines with it at either end ("connections": [{"client_ip",
+  "dst_ip","dst_port","proto","action","rule","count","first","last"}],
+  busiest 200 groups), the
   names that resolved to it and which LAN clients looked them up, and AS
   changes. The address is re-matched against the current lists first.
 

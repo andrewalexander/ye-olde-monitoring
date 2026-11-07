@@ -802,9 +802,11 @@ type IPProfile struct {
 	Alerts  []Alert   `json:"alerts"`
 	Trips   []Trip    `json:"trips"`
 	// Logins an app refused from this address, with the name tried.
-	AuthFailures []AuthFailure  `json:"auth_failures"`
-	ResolvedBy   []ResolvedFrom `json:"resolved_from"`
-	ASNChanges   []ASNChange    `json:"asn_changes,omitempty"`
+	AuthFailures []AuthFailure `json:"auth_failures"`
+	// Router firewall lines with this address at either end.
+	Connections []ConnStat     `json:"connections"`
+	ResolvedBy  []ResolvedFrom `json:"resolved_from"`
+	ASNChanges  []ASNChange    `json:"asn_changes,omitempty"`
 	// For LAN addresses: the device there now, and its sightings (DHCP,
 	// UniFi, neighbour table), across every address it has used.
 	Device    *Device    `json:"device,omitempty"`
@@ -852,6 +854,9 @@ func (s *Store) IPProfile(ip string, since, now time.Time) (IPProfile, error) {
 		return p, err
 	}
 	if p.AuthFailures, err = s.AuthFailures(ip, since, 50); err != nil {
+		return p, err
+	}
+	if p.Connections, err = s.ConnsForIP(ip, since, 200); err != nil {
 		return p, err
 	}
 	sinceS := fmtTime(since)

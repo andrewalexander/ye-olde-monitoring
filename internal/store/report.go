@@ -331,6 +331,7 @@ type ConnStat struct {
 	DstPort  int    `json:"dst_port"`
 	Proto    string `json:"proto"`
 	Action   string `json:"action"`
+	Rule     string `json:"rule,omitempty"` // only from ConnsForIP
 	Seen
 }
 
@@ -352,6 +353,30 @@ func (s *Store) ConnsForDomain(domain string, since time.Time) ([]ConnStat, erro
 func (s *Store) ConnsForClient(ip string, since time.Time) ([]ConnStat, error) {
 	return s.conns(`SELECT client_ip, dst_ip, dst_port, proto, action, count(*), min(ts), max(ts) FROM connections
 		WHERE client_ip = ? AND ts >= ? GROUP BY 1,2,3,4,5 ORDER BY 6 DESC`, ip, fmtTime(since))
+}
+
+// ConnsForIP groups the logged connections ip was either end of, by rule
+// too, so a router drop (WAN_LOCAL) and a forwarded connection (WAN_IN) are
+// told apart. limit caps the groups, busiest first.
+func (s *Store) ConnsForIP(ip string, since time.Time, limit int) ([]ConnStat, error) {
+	rows, err := s.query(`SELECT client_ip, dst_ip, dst_port, proto, action, rule, count(*), min(ts), max(ts) FROM connections
+		WHERE (client_ip = ?1 OR dst_ip = ?1) AND ts >= ?2 GROUP BY 1,2,3,4,5,6 ORDER BY 7 DESC, 9 DESC LIMIT ?3`,
+		ip, fmtTime(since), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ConnStat{}
+	for rows.Next() {
+		var c ConnStat
+		var first, last string
+		if err := rows.Scan(&c.ClientIP, &c.DstIP, &c.DstPort, &c.Proto, &c.Action, &c.Rule, &c.Count, &first, &last); err != nil {
+			return nil, err
+		}
+		c.First, c.Last = parseTime(first), parseTime(last)
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) conns(q string, args ...any) ([]ConnStat, error) {

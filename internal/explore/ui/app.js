@@ -519,6 +519,9 @@ async function renderIP(ip) {
   table(main, p.trips, LIST_VIEWS.trips.columns().filter(perIP));
   main.append(el("h2", { text: "Refused logins" }));
   table(main, p.auth_failures, [col("When", "ts", "time"), col("App", "source"), col("Name tried", "user")]);
+  main.append(el("h2", { text: "Logged connections (router firewall)" }));
+  table(main, p.connections, [col("From", "client_ip", "ip"), col("To", "dst_ip", "ip"), col("Port", "dst_port", "num"), col("Proto", "proto"),
+    col("Rule", "rule"), col("Action", "action"), col("Count", "count", "num"), col("First", "first", "time"), col("Last", "last", "time")]);
   if ((p.sightings || []).length) sightingsTable(main, p.sightings);
   if ((p.asn_changes || []).length) {
     main.append(el("h2", { text: "AS changes" }));
@@ -598,8 +601,6 @@ async function renderClient(ip) {
   if (rows.length >= limit) main.append(el("button", { text: "Show more", onclick: () => { state.limits.client = limit * 2; route(); } }));
   table(main, rows, [col("Flagged", "flagged", "bool", { sorter: "boolean" }), col("Domain", "domain", "domain"), col("Lookups", "count", "num"),
     col("First", "first", "time"), col("Last", "last", "time")]);
-  main.append(el("h2", { text: "Logged connections" }));
-  table(main, p.connections, connColumns());
   if ((dev.sightings || []).length) sightingsTable(main, dev.sightings);
 }
 

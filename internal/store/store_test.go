@@ -432,3 +432,30 @@ func TestConnsForDomainMatchesAnswersFirst(t *testing.T) {
 		t.Errorf("got %v, want %v (two rows)", have, want)
 	}
 }
+
+// An IP's connections: either end, inside the window, grouped by rule too.
+func TestConnsForIP(t *testing.T) {
+	st := open(t)
+	conn := func(h, src, dst, rule, action string, ts time.Time) ingest.Record {
+		return ingest.Record{Conn: &ingest.Conn{Hash: h, TS: ts, ClientIP: src, DstIP: dst, DstPort: 443, Proto: "tcp", Action: action, Rule: rule, Source: "test"}}
+	}
+	const scanner = "203.0.113.9"
+	st.InsertRecords([]ingest.Record{
+		conn("1", scanner, "192.0.2.1", "WAN_LOCAL-D-2147483647", "drop", now),
+		conn("2", scanner, "192.0.2.1", "WAN_LOCAL-D-2147483647", "drop", now.Add(-time.Minute)),
+		conn("3", scanner, "172.16.0.10", "WAN_IN-RET-30005", "return", now),
+		conn("4", "172.16.0.10", scanner, "LAN_OUT-A-1", "accept", now),                           // as the destination
+		conn("5", scanner, "192.0.2.1", "WAN_LOCAL-D-2147483647", "drop", now.AddDate(0, 0, -40)), // before the window
+		conn("6", "198.51.100.1", "192.0.2.1", "WAN_LOCAL-D-2147483647", "drop", now),             // someone else
+	})
+	got, err := st.ConnsForIP(scanner, now.AddDate(0, 0, -30), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].Rule != "WAN_LOCAL-D-2147483647" || got[0].Count != 2 {
+		t.Fatalf("got %+v, want 3 groups with the 2 drops first", got)
+	}
+	if got, _ := st.ConnsForIP(scanner, now.AddDate(0, 0, -30), 1); len(got) != 1 {
+		t.Errorf("limit 1 gave %d groups", len(got))
+	}
+}
