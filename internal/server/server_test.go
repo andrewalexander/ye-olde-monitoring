@@ -320,61 +320,52 @@ func TestTripRecordsAllHeadersButHashesSecrets(t *testing.T) {
 	}
 }
 
-func TestAdminAPI(t *testing.T) {
+func TestReadRoutes(t *testing.T) {
 	e := setup(t, server.Config{Token: "sekrit"})
 	e.do("POST", "/ingest", "192.0.2.10", batchJSON(goodHit("a", e.clock.Now()), goodHit("b", e.clock.Now())), auth)
-	admin := e.srv.Admin(nil)
+	mux := http.NewServeMux()
+	for pattern, h := range server.ReadRoutes(server.RouteConfig{Store: e.st, Now: e.clock.Now}) {
+		mux.HandleFunc(pattern, h)
+	}
+	get := func(url string) (int, string) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
+		return w.Code, w.Body.String()
+	}
+	if code, body := get("/api/hits?ip=203.0.113.50"); code != 200 || !strings.Contains(body, `"203.0.113.50"`) {
+		t.Errorf("hits: %d %s", code, body)
+	}
+	for _, url := range []string{"/api/hits?status=abc", "/api/hits?since=nonsense", "/api/dns"} {
+		if code, _ := get(url); code != 400 {
+			t.Errorf("%s = %d, want 400", url, code)
+		}
+	}
+	if code, _ := get("/api/trips/999"); code != 404 {
+		t.Errorf("missing trip = %d", code)
+	}
+}
+
+// The admin listener only answers health: the read routes are the explorer's.
+func TestAdminHealth(t *testing.T) {
+	e := setup(t, server.Config{Token: "sekrit"})
+	admin := e.srv.Admin()
 	get := func(url string) (int, string) {
 		w := httptest.NewRecorder()
 		admin.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
 		return w.Code, w.Body.String()
 	}
-	if code, body := get("/api/top?by=ip"); code != 200 || !strings.Contains(body, `"key": "203.0.113.50"`) || !strings.Contains(body, `"count": 2`) {
-		t.Errorf("top: %d %s", code, body)
-	}
-	for _, url := range []string{"/api/top?by=password", "/api/dns/top?by=password", "/api/top?order=sideways"} {
-		if code, _ := get(url); code != 400 {
-			t.Errorf("%s = %d, want 400", url, code)
-		}
-	}
-	if code, body := get("/api/top?by=ip&order=bottom&ip=192.0.2.99"); code != 200 || strings.Contains(body, "203.0.113.50") {
-		t.Errorf("ip filter: %d %s", code, body)
-	}
-	if code, body := get("/api/top?by=ip,method"); code != 200 || !strings.Contains(body, `"keys"`) {
-		t.Errorf("by= list: %d %s", code, body)
-	}
-	if code, body := get("/api/top?by=ip,method"); code != 200 || !strings.Contains(body, `"total": 2`) {
-		t.Errorf("total: %d %s", code, body)
-	}
-	if code, body := get("/api/top?by=ip&status=4xx"); code != 200 || strings.Contains(body, "203.0.113.50") {
-		t.Errorf("status filter: %d %s", code, body)
-	}
-	for _, url := range []string{"/api/top?status=abc", "/api/hits?status=abc"} {
-		if code, _ := get(url); code != 400 {
-			t.Errorf("%s = %d, want 400", url, code)
-		}
-	}
-	if code, _ := get("/api/top?by=ip,password"); code != 400 {
-		t.Errorf("bad by= in a list = %d", code)
-	}
-	if code, body := get("/api/top?by=ip&order=new"); code != 200 || !strings.Contains(body, `"first"`) {
-		t.Errorf("order=new: %d %s", code, body)
-	}
-	if code, _ := get("/api/hits?since=nonsense"); code != 400 {
-		t.Errorf("bad since = %d", code)
-	}
-	if code, _ := get("/api/trips/999"); code != 404 {
-		t.Errorf("missing trip = %d", code)
-	}
-	if code, body := get("/api/health"); code != 200 || !strings.Contains(body, `"ingest"`) {
+	if code, body := get("/api/health"); code != 200 || !strings.Contains(body, `"ingest"`) || !strings.Contains(body, `"data_problems"`) {
 		t.Errorf("health: %d %s", code, body)
+	}
+	if code, _ := get("/api/hits"); code != 404 {
+		t.Errorf("admin /api/hits = %d, want 404", code)
 	}
 }
 
 // GET /api is the endpoint reference; it should mention every route.
 func TestAPIDoc(t *testing.T) {
 	e := setup(t, server.Config{})
-	admin := e.srv.Admin(nil)
+	admin := e.srv.Admin()
 	for _, url := range []string{"/api", "/api/"} {
 		w := httptest.NewRecorder()
 		admin.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
@@ -382,9 +373,7 @@ func TestAPIDoc(t *testing.T) {
 			t.Fatalf("%s: %d %s", url, w.Code, w.Header().Get("Content-Type"))
 		}
 		for _, route := range []string{
-			"/counter.svg", "/counter.txt", "/counter.js", "POST /ingest",
-			"/api/hits", "/api/top", "/api/dns?domain", "/api/dns?client", "/api/dns/top",
-			"/api/alerts?", "/api/bans?", "/api/trips?", "/api/trips/{id}", "/api/health",
+			"/counter.svg", "/counter.txt", "/counter.js", "POST /ingest", "/api/health",
 		} {
 			if !strings.Contains(w.Body.String(), route) {
 				t.Errorf("%s doesn't document %s", url, route)

@@ -595,7 +595,7 @@ async function renderClient(ip) {
   main.replaceChildren(el("h1", { text: name ? `${name} (${ip})` : ip }),
     el("p", { class: "lede" }, "What this LAN device looked up. ", el("a", { href: href("ip", ip), text: "Its address profile" }), "."),
     el("div", { class: "grid" }, deviceCard(dev.device)));
-  const rows = (p.lookups || []).map((r) => ({ ...r, flagged: flaggedSet.has(r.domain) }));
+  const rows = (p || []).map((r) => ({ ...r, flagged: flaggedSet.has(r.domain) }));
   rows.sort((a, b) => (b.flagged - a.flagged) || (b.count - a.count));
   main.append(el("h2", { text: `Lookups (${fmtNum(rows.length)}, ${rows.filter((r) => r.flagged).length} flagged)` }));
   if (rows.length >= limit) main.append(el("button", { text: "Show more", onclick: () => { state.limits.client = limit * 2; route(); } }));

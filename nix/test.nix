@@ -74,7 +74,7 @@ self:
         "printf '%s\\n%s\\n' '<30>Oct 27 15:02:00 router dnsmasq[1]: query[A] evil.example.org from 192.168.1.20'"
         " '<30>Oct 27 15:02:00 router dnsmasq[1]: reply evil.example.org is 203.0.113.66' | nc -u -w1 127.0.0.1 5514"
     )
-    machine.wait_until_succeeds("curl -fsS 'http://127.0.0.1:8090/api/dns?domain=evil.example.org' | jq -e '.lookups[0].client_ip == \"192.168.1.20\"'")
+    machine.wait_until_succeeds("curl -fsS 'http://127.0.0.1:8090/api/domain/evil.example.org' | jq -e '.lookups[0].client_ip == \"192.168.1.20\"'")
     # The local feed is "downloaded", and the explorer picks it up and matches.
     machine.succeed("systemctl start dnscount-feeds.service")
     machine.succeed("test -s /var/lib/dnscount/feeds/vmbad.txt")

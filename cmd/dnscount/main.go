@@ -1,6 +1,6 @@
 // Command dnscount is a dumb simple hit counter and request/DNS logger.
 //
-//	dnscount serve          public counter + /ingest collector + localhost admin API
+//	dnscount serve          public counter + /ingest collector + localhost health endpoint
 //	dnscount syslog         receive UniFi remote syslog (DNS lookups, firewall logs)
 //	dnscount ingest-access  import nginx/apache/caddy access logs
 //	dnscount ingest-dns     import dnsmasq/UniFi/Pi-hole or AdGuard logs
@@ -46,7 +46,7 @@ import (
 const usage = `usage: dnscount <command> [flags]
 
 commands:
-  serve          public counter + /ingest collector + localhost admin API
+  serve          public counter + /ingest collector + localhost health endpoint
   syslog         receive UniFi remote syslog (DNS lookups, firewall logs)
   ingest-access  import nginx/apache "combined" or caddy JSON access logs
   ingest-dns     import dnsmasq (UniFi, Pi-hole), unifi (dnsmasq+firewall+IDS+LAN devices) or adguard logs
@@ -96,7 +96,7 @@ func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	db := dbFlag(fs)
 	addr := fs.String("addr", ":8080", "public listen address (counter + /ingest)")
-	adminAddr := fs.String("admin-addr", "127.0.0.1:8081", "admin API listen address; keep it on localhost")
+	adminAddr := fs.String("admin-addr", "127.0.0.1:8081", "health endpoint listen address (breaker stats); keep it on localhost")
 	token := fs.String("token", os.Getenv("DNSCOUNT_TOKEN"), "bearer token for /ingest (or $DNSCOUNT_TOKEN); empty disables /ingest")
 	trusted := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For is believed")
 	counterLimit := fs.Int("counter-limit", 30, "counter increments per IP per minute")
@@ -107,7 +107,7 @@ func serve(args []string) error {
 		return fmt.Errorf("-trusted-proxies: %w", err)
 	}
 	if host, _, _ := net.SplitHostPort(*adminAddr); !isLoopback(host) {
-		log.Printf("warning: admin API on %s has no auth and isn't on localhost", *adminAddr)
+		log.Printf("warning: admin listener on %s has no auth and isn't on localhost", *adminAddr)
 	}
 	if *token == "" {
 		log.Printf("no -token: /ingest will reject everything (counter still works)")
@@ -129,7 +129,7 @@ func serve(args []string) error {
 	go srv.Ingest.Run(ctx)
 	return runHTTP(ctx,
 		&http.Server{Addr: *addr, Handler: srv.Public(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second},
-		&http.Server{Addr: *adminAddr, Handler: srv.Admin(nil), ReadHeaderTimeout: 10 * time.Second},
+		&http.Server{Addr: *adminAddr, Handler: srv.Admin(), ReadHeaderTimeout: 10 * time.Second},
 	)
 }
 

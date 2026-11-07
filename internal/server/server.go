@@ -1,5 +1,5 @@
 // Package server is `dnscount serve`: the public counter, the /ingest
-// collector for RemoteSinks, and the localhost-only admin API.
+// collector for RemoteSinks, and the localhost-only health endpoint.
 package server
 
 import (
@@ -16,6 +16,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -53,6 +54,11 @@ type Server struct {
 	cfg     Config
 	Counter *guard.Breaker
 	Ingest  *guard.Breaker
+
+	checkMu   sync.Mutex
+	checkAt   time.Time
+	checkLast []string
+	checkErr  error
 }
 
 func New(cfg Config) *Server {

@@ -14,28 +14,35 @@ import (
 	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
 )
 
-// Admin is the research API. It has no auth: bind it to localhost only and
-// reach it over an SSH tunnel.
-func (s *Server) Admin(extraHealth func() map[string]any) http.Handler {
+// Admin is the localhost-only listener: the live breaker stats, which only
+// this process has, and the data checks. Everything else is read from the
+// explorer. It has no auth: bind it to localhost and reach it over SSH.
+func (s *Server) Admin() http.Handler {
 	mux := http.NewServeMux()
 	rc := RouteConfig{Store: s.cfg.Store, Now: s.cfg.Now, Log: s.cfg.Log}
 	mux.HandleFunc("GET /api", serveAPIDoc)
 	mux.HandleFunc("GET /api/{$}", serveAPIDoc)
-	for pattern, h := range ReadRoutes(rc) {
-		mux.HandleFunc(pattern, h)
-	}
 	mux.HandleFunc("GET /api/health", rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
-		h := map[string]any{"breakers": []guard.Stats{s.Counter.Stats(), s.Ingest.Stats()}}
-		if extraHealth != nil {
-			for k, v := range extraHealth() {
-				h[k] = v
-			}
-		}
-		problems, err := st.Check(s.cfg.Now())
-		h["data_problems"] = problems
-		return h, err
+		problems, err := s.checks(st)
+		return map[string]any{
+			"breakers":      []guard.Stats{s.Counter.Stats(), s.Ingest.Stats()},
+			"data_problems": problems,
+		}, err
 	}))
 	return mux
+}
+
+// checks runs the data checks at most every 10 minutes: they scan whole
+// tables, and the explorer's Health page polls this endpoint.
+func (s *Server) checks(st *store.Store) ([]string, error) {
+	s.checkMu.Lock()
+	defer s.checkMu.Unlock()
+	now := s.cfg.Now()
+	if s.checkAt.IsZero() || now.Sub(s.checkAt) > 10*time.Minute || s.checkErr != nil {
+		s.checkLast, s.checkErr = st.Check(now)
+		s.checkAt = now
+	}
+	return s.checkLast, s.checkErr
 }
 
 // RouteConfig is what the read-only API handlers need. The admin listener
@@ -54,39 +61,19 @@ type RouteConfig struct {
 // already bound to the request's context.
 type HandlerFunc func(st *store.Store, r *http.Request, p *Params) (any, error)
 
-// ReadRoutes is the read-only research API, by ServeMux pattern. Callers may
-// replace entries before registering them.
+// ReadRoutes is the read-only research API the explorer serves, by ServeMux
+// pattern. Callers may replace entries before registering them.
 func ReadRoutes(rc RouteConfig) map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
 		"GET /api/hits": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
 			return st.Hits(store.HitFilter{Site: p.Str("site"), IP: p.Str("ip"), Status: p.Str("status"), Since: p.Since(), Limit: p.Int("limit")})
 		}),
-		"GET /api/top": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
-			q := p.Group("ip")
-			q.Site, q.IP, q.Status = p.Str("site"), p.Str("ip"), p.Str("status")
-			return st.TopHits(q)
-		}),
 		"GET /api/dns": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
-			if d := p.Str("domain"); d != "" {
-				lookups, err := st.DNSByDomain(d, p.Since())
-				if err != nil {
-					return nil, err
-				}
-				conns, err := st.ConnsForDomain(d, p.Since())
-				return map[string]any{"lookups": lookups, "connections": conns}, err
+			c := p.Str("client")
+			if c == "" {
+				return nil, ErrBadParam("need client=")
 			}
-			if c := p.Str("client"); c != "" {
-				lookups, err := st.DNSByClient(c, p.Since(), p.Int("limit"))
-				if err != nil {
-					return nil, err
-				}
-				conns, err := st.ConnsForClient(c, p.Since())
-				return map[string]any{"lookups": lookups, "connections": conns}, err
-			}
-			return nil, ErrBadParam("need domain= or client=")
-		}),
-		"GET /api/dns/top": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
-			return st.DNSTop(p.Group("domain"))
+			return st.DNSByClient(c, p.Since(), p.Int("limit"))
 		}),
 		"GET /api/alerts": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
 			f := p.AlertFilter()
@@ -181,19 +168,6 @@ func (p *Params) SinceOr(def string) time.Time {
 		p.err = ErrBadParam(err.Error())
 	}
 	return t
-}
-
-// Group reads the parameters shared by the grouped reports. order=new needs a
-// window to mean anything, so it defaults to the last 24 hours.
-func (p *Params) Group(by string) store.GroupQuery {
-	rank := store.Rank(p.StrOr("order", string(store.RankTop)))
-	q := store.GroupQuery{By: p.StrOr("by", by), Limit: p.IntOr("limit", 25), Rank: rank}
-	if rank == store.RankNew && p.Str("since") == "" {
-		q.Since = p.now().Add(-24 * time.Hour)
-	} else {
-		q.Since = p.Since()
-	}
-	return q
 }
 
 func (p *Params) AlertFilter() store.AlertFilter {

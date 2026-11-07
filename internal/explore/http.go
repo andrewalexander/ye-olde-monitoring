@@ -166,9 +166,6 @@ func (x *Explorer) Handler() http.Handler {
 		}
 		return st.Flagged(q)
 	})
-	routes["GET /api/feeds"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
-		return x.feedStatus(r.Context())
-	})
 	routes["GET /api/overview"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
 		return x.overview(st)
 	})
