@@ -609,3 +609,75 @@ func TestDomainProfileLookupsMatchScan(t *testing.T) {
 		t.Errorf("example.com: %d clients, want 3 (20, 21, 24)", len(p.Lookups))
 	}
 }
+
+// An inbound connection indexes its source as incoming and nothing for its
+// destination, which is our own address.
+func TestConnectionIndexesSourceOnly(t *testing.T) {
+	x := openExplorer(t)
+	x.primary.InsertRecords([]ingest.Record{{Conn: &ingest.Conn{Hash: "c", TS: now, ClientIP: "203.0.113.9",
+		DstIP: "198.51.100.200", DstPort: 443, Proto: "tcp", Action: "drop", Rule: "WAN_LOCAL-D-2147483647", Source: "test"}}})
+	x.index(t)
+	var roles int
+	if err := x.enr.DB().QueryRow(`SELECT roles FROM indicators WHERE indicator = '203.0.113.9'`).Scan(&roles); err != nil || roles != store.RoleConnSrc {
+		t.Errorf("source roles = %b, %v; want RoleConnSrc", roles, err)
+	}
+	var n int
+	x.enr.DB().QueryRow(`SELECT count(*) FROM indicators WHERE indicator = '198.51.100.200'`).Scan(&n)
+	if n != 0 {
+		t.Errorf("destination was indexed")
+	}
+}
+
+// An index from before v3 loses RoleConn in place: an indicator with only
+// that role goes (with its feed matches), one with others keeps them, and
+// only connections are re-read (other cursors stay put).
+func TestIndexV3ClearsRoleConn(t *testing.T) {
+	x := openExplorer(t)
+	db := x.enr.DB()
+	for _, q := range []string{
+		`INSERT INTO indicators (indicator, kind, first_seen, last_seen, roles) VALUES ('198.51.100.200', 'ip', 'a', 'b', 64)`,
+		`INSERT INTO indicators (indicator, kind, first_seen, last_seen, roles) VALUES ('198.51.100.201', 'ip', 'a', 'b', 96)`,
+		`INSERT INTO indicators (indicator, kind, first_seen, last_seen, roles) VALUES ('203.0.113.9', 'ip', 'a', 'b', 256)`,
+		`INSERT INTO cursors (tbl, last_id) VALUES ('hits', 42) ON CONFLICT(tbl) DO UPDATE SET last_id = 42`,
+		`INSERT INTO cursors (tbl, last_id) VALUES ('connections', 42) ON CONFLICT(tbl) DO UPDATE SET last_id = 42`,
+		`INSERT INTO meta (key, value) VALUES ('index_version', '2') ON CONFLICT(key) DO UPDATE SET value = '2'`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One outbound connection (LAN source) and one inbound (public source),
+	// read again from the start.
+	x.primary.InsertRecords([]ingest.Record{
+		{Conn: &ingest.Conn{Hash: "out", TS: now, ClientIP: "192.168.1.20", DstIP: "198.51.100.210", DstPort: 443, Proto: "tcp", Action: "accept", Source: "test"}},
+		{Conn: &ingest.Conn{Hash: "in", TS: now, ClientIP: "203.0.113.10", DstIP: "198.51.100.200", DstPort: 443, Proto: "tcp", Action: "drop", Source: "test"}},
+	})
+	x.index(t) // IndexNew runs the version step first
+	got := map[string]int{}
+	rows, err := db.Query(`SELECT indicator, roles FROM indicators`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var i string
+		var r int
+		rows.Scan(&i, &r)
+		got[i] = r
+	}
+	rows.Close()
+	want := map[string]int{
+		"198.51.100.201": store.RoleAnswer,  // kept its other role
+		"203.0.113.9":    store.RoleConnSrc, // untouched
+		"198.51.100.210": store.RoleConn,    // a LAN device went there
+		"203.0.113.10":   store.RoleConnSrc, // came at us
+		// 198.51.100.200 (RoleConn only, and an inbound row's destination) is gone
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("indicators = %v\nwant %v", got, want)
+	}
+	var last int
+	db.QueryRow(`SELECT last_id FROM cursors WHERE tbl = 'hits'`).Scan(&last)
+	if last != 42 {
+		t.Errorf("hits cursor = %d, want 42 (no re-read)", last)
+	}
+}

@@ -20,7 +20,7 @@ const (
 	RoleTrip                 // tripped a breaker
 	RoleLookup               // a domain LAN devices looked up
 	RoleAnswer               // an address a lookup resolved to
-	RoleConn                 // destination of a logged connection
+	RoleConn                 // destination of a logged connection from a LAN device (LAN → internet)
 	RoleAlertDst             // destination of an IDS alert
 	RoleConnSrc              // source of a logged connection from outside (port forwards, WAN drops)
 	RoleAuthFail             // an app refused its login (new roles go last: the bits are stored)
@@ -44,6 +44,8 @@ var indexSources = []indexSource{
 	{"auth_failures", "ts, ip", []int{RoleAuthFail}},
 	{"dns_queries", "ts, client_ip, domain", []int{roleLAN, RoleLookup}},
 	{"dns_replies", "ts, answer", []int{RoleAnswer}},
+	// A destination counts only when a LAN device was the source: for traffic
+	// coming at us (WAN drops, port forwards) it's our own address.
 	{"connections", "ts, client_ip, dst_ip", []int{RoleConnSrc, RoleConn}},
 	{"lan_sightings", "ts, ip", []int{roleLAN}}, // DHCP, UniFi and neighbour-table sightings are LAN devices
 }
@@ -103,6 +105,9 @@ func indexBatch(src, dst *Store, is indexSource, batch int) (int, error) {
 		n++
 		ts := *dest[1].(*string)
 		for i, role := range is.roles {
+			if role == RoleConn && !privateAddr(vals[0]) {
+				continue
+			}
 			ind, kind := classify(vals[i], role)
 			if ind == "" {
 				continue
@@ -178,6 +183,13 @@ func classify(v string, role int) (ind, kind string) {
 		}
 	}
 	return "", ""
+}
+
+// privateAddr reports whether v is a LAN-side address (private, link-local
+// and the like): the source of a connection a LAN device made.
+func privateAddr(v string) bool {
+	a, public := enrich.PublicIP(v)
+	return a.IsValid() && !public
 }
 
 // Lists is everything the indicators get matched against.
@@ -640,7 +652,9 @@ func (s *Store) Intel(inds []string, history bool) (map[string]*Intel, error) {
 //
 //	1: first version
 //	2: special-use names (ipv4only.arpa) are indexed too
-const indexVersion = 2
+//	3: a connection's destination is RoleConn only when a LAN device was
+//	   the source; the old bits are cleared and connections alone re-read
+const indexVersion = 3
 
 func (s *Store) resetIndexIfOld() error {
 	var v int
@@ -656,8 +670,26 @@ func (s *Store) resetIndexIfOld() error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM cursors`); err != nil {
-		return err
+	if v < 2 {
+		if _, err := tx.Exec(`DELETE FROM cursors`); err != nil {
+			return err
+		}
+	}
+	// v3: clear RoleConn (and drop indicators it was the only reason for),
+	// then re-read connections under the new rule.
+	for _, q := range []string{
+		`UPDATE indicators SET roles = roles & ~? WHERE roles & ?`,
+		`DELETE FROM enrichment WHERE indicator IN (SELECT indicator FROM indicators WHERE roles = 0)`,
+		`DELETE FROM indicators WHERE roles = 0`,
+		`DELETE FROM cursors WHERE tbl = 'connections'`,
+	} {
+		var args []any
+		if strings.Count(q, "?") == 2 {
+			args = []any{RoleConn, RoleConn}
+		}
+		if _, err := tx.Exec(q, args...); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.Exec(`INSERT INTO meta (key, value) VALUES ('index_version', ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, indexVersion); err != nil {
