@@ -18,8 +18,6 @@ func TestNewerUniFiLines(t *testing.T) {
 	}{
 		{`<13>Nov  6 00:00:01 media-router media-router [WAN_IN-RET-30005] DESCR="[WAN_IN]Allow Port Forward {Jellyfin" IN=eth3 OUT=br2 ` + mac + ` SRC=203.0.113.9 DST=172.16.0.10 LEN=40 TOS=00 PREC=0x40 TTL=54 ID=0 PROTO=TCP SPT=44922 DPT=443 SEQ=0 ACK=0 WINDOW=0 SYN URGP=0 MARK=1a0000`,
 			"203.0.113.9", "172.16.0.10", "return", "WAN_IN-RET-30005", 443},
-		{`<13>Nov  6 00:00:08 media-router media-router [LAN_LOCAL-RET-2147483647] DESCR="no rule description" IN=br0 OUT= ` + mac + ` SRC=192.168.1.30 DST=192.168.1.1 LEN=64 TOS=00 PREC=0x00 TTL=64 ID=0 DF PROTO=TCP SPT=61889 DPT=443 SEQ=1 ACK=0 WINDOW=65535 SYN URGP=0 MARK=1a0000`,
-			"192.168.1.30", "192.168.1.1", "return", "LAN_LOCAL-RET-2147483647", 443},
 		// The old kernel-tagged form still parses.
 		{`<4>Oct 27 15:00:02 UDM-Pro kernel: [ 1234.5678] [WAN_LOCAL-D-2147483647] IN=eth8 OUT= MAC=cc:dd SRC=198.51.100.7 DST=192.0.2.1 LEN=40 PROTO=TCP SPT=40000 DPT=22 WINDOW=1024 SYN URGP=0`,
 			"198.51.100.7", "192.0.2.1", "drop", "WAN_LOCAL-D-2147483647", 22},
@@ -38,6 +36,8 @@ func TestNewerUniFiLines(t *testing.T) {
 	for _, line := range []string{
 		// The DNAT copy of a forwarded packet: the forwarded rule has it.
 		`<13>Nov  6 00:00:01 media-router media-router [PREROUTING-DNAT-3] DESCR="PortForward DNAT [Jellyfin HTTPS]" IN=eth3 OUT= ` + mac + ` SRC=203.0.113.9 DST=192.0.2.44 LEN=40 PROTO=TCP SPT=44922 DPT=443 SYN`,
+		// LAN devices talking to the router.
+		`<13>Nov  6 00:00:08 media-router media-router [LAN_LOCAL-RET-2147483647] DESCR="no rule description" IN=br0 OUT= ` + mac + ` SRC=192.168.1.30 DST=192.168.1.1 LEN=64 PROTO=TCP SPT=61889 DPT=443 SYN`,
 		// Other untagged lines with brackets but no packet fields.
 		`<13>Nov  6 00:00:01 media-router media-router [some-daemon] started`,
 		`<6>Oct 27 15:00:04 UDM-Pro kernel: br0: port 2(eth1) entered forwarding state`,

@@ -25,7 +25,9 @@ import (
 //
 // A port forward logs each inbound packet twice: [PREROUTING-DNAT-n] to the
 // WAN address, then the forwarded rule to the real destination. Only the
-// second is kept.
+// second is kept. LAN_LOCAL (LAN devices talking to the router itself,
+// UniFi's default rules log it) is skipped: it's most of the volume and
+// says nothing about the internet.
 //
 // The bracketed prefix is the rule name; UniFi encodes the action in it
 // (-A- accept, -D- drop, -R- reject). An uptime stamp "[ 1234.567]" before
@@ -63,8 +65,10 @@ func (IPTables) ParseLine(line string, now time.Time) (ingest.Record, error) {
 	default:
 		return ingest.Record{}, ingest.ErrSkip
 	}
-	if m := ruleRE.FindStringSubmatch(msg); m != nil && strings.HasPrefix(m[1], "PREROUTING-DNAT") {
-		return ingest.Record{}, ingest.ErrSkip // the forwarded rule logs the same packet
+	if m := ruleRE.FindStringSubmatch(msg); m != nil {
+		if strings.HasPrefix(m[1], "PREROUTING-DNAT") || strings.HasPrefix(m[1], "LAN_LOCAL-") {
+			return ingest.Record{}, ingest.ErrSkip // see above
+		}
 	}
 	c := &ingest.Conn{TS: h.TS, Source: "unifi-fw"}
 	if m := ruleRE.FindStringSubmatch(msg); m != nil {
