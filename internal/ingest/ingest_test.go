@@ -367,7 +367,7 @@ func TestLANSightings(t *testing.T) {
 	}
 	want := []ingest.Sighting{
 		{IP: "192.168.1.230", MAC: "02:00:00:00:00:0b", Hostname: "Mac", Iface: "br0", Event: "dhcpack", Source: "dnsmasq-dhcp"},
-		{IP: "172.16.0.102", MAC: "02:00:00:00:00:0a", Iface: "br2", Event: "dhcpack", Source: "dnsmasq-dhcp"},
+		{IP: "192.168.1.102", MAC: "02:00:00:00:00:0a", Iface: "br2", Event: "dhcpack", Source: "dnsmasq-dhcp"},
 		{IP: "192.168.1.131", MAC: "02:00:00:00:00:0c", Hostname: "android-4f2a", Alias: "Kitchen tablet", Network: "Default",
 			Event: "connected", Source: "unifi-cef"},
 		{MAC: "02:00:00:00:00:0c", Alias: "Kitchen tablet", Event: "disconnected", Source: "unifi-cef"},

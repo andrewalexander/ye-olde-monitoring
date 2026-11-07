@@ -70,10 +70,10 @@ func newLookupWorld(t *testing.T) *lookupWorld {
 				ClientIP: ip, Host: "jf.example", Path: "/.env", Status: 404}})
 		}
 	}
-	hits("185.242.226.118", 5) // banned below: a candidate
-	hits("8.8.4.4", 2)         // flagged by a list below: a candidate
-	hits("9.9.9.9", 3)         // nothing against it: not a candidate
-	p.InsertBan(ingest.Ban{TS: w.now.Add(-30 * time.Minute), Event: "ban", Jail: "caddy-probe", IP: "185.242.226.118"})
+	hits("93.184.216.118", 5) // banned below: a candidate
+	hits("8.8.4.4", 2)        // flagged by a list below: a candidate
+	hits("9.9.9.9", 3)        // nothing against it: not a candidate
+	p.InsertBan(ingest.Ban{TS: w.now.Add(-30 * time.Minute), Event: "ban", Jail: "caddy-probe", IP: "93.184.216.118"})
 	// A public-looking address that's really a LAN device (seen in the
 	// neighbour table), with a ban against it: never sent anywhere.
 	hits("2606:4700:10::5", 1)
@@ -122,7 +122,7 @@ func TestLookupRun(t *testing.T) {
 	if ipOnly.calls+both.calls != 0 {
 		t.Fatalf("dry run made %d calls", ipOnly.calls+both.calls)
 	}
-	for _, want := range []string{"185.242.226.118", "banned 1× in 30d", "8.8.4.4", "malicious (bad)",
+	for _, want := range []string{"93.184.216.118", "banned 1× in 30d", "8.8.4.4", "malicious (bad)",
 		"evil.example.org", "93.184.216.99", "resolved to it", "never sent (privacy gate)", "one of our own names"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry run output lacks %q:\n%s", want, out)
@@ -137,7 +137,7 @@ func TestLookupRun(t *testing.T) {
 	// the same verdict (so a malicious outgoing address beats an inbound
 	// one that's only banned); only what each provider handles.
 	w.run(t, []ProviderRun{{ipOnly, limits}, {both, limits}}, nil)
-	if want := []string{"8.8.4.4", "93.184.216.99", "185.242.226.118"}; !slices.Equal(ipOnly.sent, want) {
+	if want := []string{"8.8.4.4", "93.184.216.99", "93.184.216.118"}; !slices.Equal(ipOnly.sent, want) {
 		t.Errorf("abuseipdb asked about %v, want %v", ipOnly.sent, want)
 	}
 	if !slices.Contains(both.sent, "evil.example.org") || both.calls != 1 {
@@ -152,14 +152,14 @@ func TestLookupRun(t *testing.T) {
 	}
 
 	// The answers are in the enrichment store, and the explorer shows them.
-	in, err := w.ro.Intel([]string{"185.242.226.118"}, false)
-	if err != nil || in["185.242.226.118"] == nil || in["185.242.226.118"].Lookups["abuseipdb"] == nil ||
-		!in["185.242.226.118"].Lookups["abuseipdb"].Found {
-		t.Fatalf("intel: %+v %v", in["185.242.226.118"], err)
+	in, err := w.ro.Intel([]string{"93.184.216.118"}, false)
+	if err != nil || in["93.184.216.118"] == nil || in["93.184.216.118"].Lookups["abuseipdb"] == nil ||
+		!in["93.184.216.118"].Lookups["abuseipdb"].Found {
+		t.Fatalf("intel: %+v %v", in["93.184.216.118"], err)
 	}
 	// Queried answers are context: they don't make anything flagged.
-	if in["185.242.226.118"].Verdict != "" {
-		t.Errorf("a lookup set a verdict: %+v", in["185.242.226.118"])
+	if in["93.184.216.118"].Verdict != "" {
+		t.Errorf("a lookup set a verdict: %+v", in["93.184.216.118"])
 	}
 
 	// Within the TTL nothing is asked again.

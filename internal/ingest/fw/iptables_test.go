@@ -16,8 +16,8 @@ func TestNewerUniFiLines(t *testing.T) {
 		src, dst, action, rule string
 		port                   int
 	}{
-		{`<13>Nov  6 00:00:01 media-router media-router [WAN_IN-RET-30005] DESCR="[WAN_IN]Allow Port Forward {Jellyfin" IN=eth3 OUT=br2 ` + mac + ` SRC=203.0.113.9 DST=172.16.0.10 LEN=40 TOS=00 PREC=0x40 TTL=54 ID=0 PROTO=TCP SPT=44922 DPT=443 SEQ=0 ACK=0 WINDOW=0 SYN URGP=0 MARK=1a0000`,
-			"203.0.113.9", "172.16.0.10", "return", "WAN_IN-RET-30005", 443},
+		{`<13>Nov  6 00:00:01 media-router media-router [WAN_IN-RET-30005] DESCR="[WAN_IN]Allow Port Forward {Jellyfin" IN=eth3 OUT=br2 ` + mac + ` SRC=203.0.113.9 DST=192.168.1.110 LEN=40 TOS=00 PREC=0x40 TTL=54 ID=0 PROTO=TCP SPT=44922 DPT=443 SEQ=0 ACK=0 WINDOW=0 SYN URGP=0 MARK=1a0000`,
+			"203.0.113.9", "192.168.1.110", "return", "WAN_IN-RET-30005", 443},
 		// The old kernel-tagged form still parses.
 		{`<4>Oct 27 15:00:02 UDM-Pro kernel: [ 1234.5678] [WAN_LOCAL-D-2147483647] IN=eth8 OUT= MAC=cc:dd SRC=198.51.100.7 DST=192.0.2.1 LEN=40 PROTO=TCP SPT=40000 DPT=22 WINDOW=1024 SYN URGP=0`,
 			"198.51.100.7", "192.0.2.1", "drop", "WAN_LOCAL-D-2147483647", 22},

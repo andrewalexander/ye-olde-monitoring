@@ -30,10 +30,10 @@ func TestDeviceNames(t *testing.T) {
 	seen(t, st, "r1", t1, "192.168.1.50", "02:00:00:00:00:d1", "old-laptop", "", "dnsmasq-dhcp")
 	seen(t, st, "r2", t2, "192.168.1.50", "02:00:00:00:00:d2", "new-phone", "", "dnsmasq-dhcp")
 	// UniFi's default alias ("hostname xx:yy") isn't a chosen name.
-	seen(t, st, "a1", t1, "172.16.0.10", "02:00:00:00:00:0d", "media-server", "media-server 00:0d", "unifi-cef")
+	seen(t, st, "a1", t1, "192.168.1.110", "02:00:00:00:00:0d", "media-server", "media-server 00:0d", "unifi-cef")
 
 	dev, err := st.Devices([]string{"192.168.1.230", "2606:4700:10::5", "2606:4700:10::7",
-		"192.168.1.131", "172.16.0.102", "192.168.1.50", "172.16.0.10", "192.168.1.99"}, time.Time{})
+		"192.168.1.131", "192.168.1.102", "192.168.1.50", "192.168.1.110", "192.168.1.99"}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,9 +42,9 @@ func TestDeviceNames(t *testing.T) {
 		"2606:4700:10::5": "Mac",            // IPv6, named through the MAC DHCP saw
 		"2606:4700:10::7": "Kitchen tablet", // through the MAC UniFi named
 		"192.168.1.131":   "Kitchen tablet", // the alias you set beats the hostname
-		"172.16.0.102":    "",               // a lease with no hostname
+		"192.168.1.102":   "",               // a lease with no hostname
 		"192.168.1.50":    "new-phone",      // whoever has it now
-		"172.16.0.10":     "media-server",   // not "media-server 00:0d"
+		"192.168.1.110":   "media-server",   // not "media-server 00:0d"
 	} {
 		d, ok := dev[ip]
 		if !ok || d.Name != want {

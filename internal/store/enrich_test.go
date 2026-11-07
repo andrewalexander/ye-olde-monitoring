@@ -437,7 +437,7 @@ func TestIntelJSONDoesNotCollide(t *testing.T) {
 			t.Errorf("%s missing from %s", want, b)
 		}
 	}
-	b, _ = json.Marshal(store.InboundIP{IP: "185.242.226.118", Intel: in})
+	b, _ = json.Marshal(store.InboundIP{IP: "93.184.216.118", Intel: in})
 	if !strings.Contains(string(b), `"queried":{"censys":`) {
 		t.Errorf("inbound row: %s", b)
 	}

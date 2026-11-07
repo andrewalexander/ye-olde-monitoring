@@ -113,8 +113,8 @@ func TestAutoNeverCallsCensys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st.InsertHits([]hit.Hit{{Hash: "h", TS: time.Now(), Site: "s", Source: "t", ClientIP: "185.242.226.118"}})
-	st.InsertBan(ingest.Ban{TS: time.Now(), Event: "ban", Jail: "j", IP: "185.242.226.118"})
+	st.InsertHits([]hit.Hit{{Hash: "h", TS: time.Now(), Site: "s", Source: "t", ClientIP: "93.184.216.118"}})
+	st.InsertBan(ingest.Ban{TS: time.Now(), Event: "ban", Jail: "j", IP: "93.184.216.118"})
 	st.Close()
 	conf := filepath.Join(dir, "lookups.json")
 	os.WriteFile(conf, []byte(`{"automatic":["censys"],"providers":{"censys":{"base":"`+srv.URL+`","daily":100}}}`), 0o600)

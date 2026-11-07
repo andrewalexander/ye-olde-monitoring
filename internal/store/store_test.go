@@ -400,7 +400,7 @@ func TestConnsForDomainMatchesAnswersFirst(t *testing.T) {
 		conn("c3", "192.168.1.21", "203.0.113.2", 443, now.Add(-time.Minute)),
 		conn("c4", "192.168.1.22", "203.0.113.3", 443, now),                    // other domain
 		conn("c5", "192.168.1.23", "203.0.113.1", 443, now.AddDate(0, 0, -40)), // before the window
-		conn("c6", "198.51.100.9", "172.16.0.10", 443, now),                    // a port forward
+		conn("c6", "198.51.100.9", "192.168.1.110", 443, now),                  // a port forward
 	})
 	since := now.AddDate(0, 0, -30)
 	got, err := st.ConnsForDomain("example.com", since)
@@ -443,8 +443,8 @@ func TestConnsForIP(t *testing.T) {
 	st.InsertRecords([]ingest.Record{
 		conn("1", scanner, "192.0.2.1", "WAN_LOCAL-D-2147483647", "drop", now),
 		conn("2", scanner, "192.0.2.1", "WAN_LOCAL-D-2147483647", "drop", now.Add(-time.Minute)),
-		conn("3", scanner, "172.16.0.10", "WAN_IN-RET-30005", "return", now),
-		conn("4", "172.16.0.10", scanner, "LAN_OUT-A-1", "accept", now),                           // as the destination
+		conn("3", scanner, "192.168.1.110", "WAN_IN-RET-30005", "return", now),
+		conn("4", "192.168.1.110", scanner, "LAN_OUT-A-1", "accept", now),                         // as the destination
 		conn("5", scanner, "192.0.2.1", "WAN_LOCAL-D-2147483647", "drop", now.AddDate(0, 0, -40)), // before the window
 		conn("6", "198.51.100.1", "192.0.2.1", "WAN_LOCAL-D-2147483647", "drop", now),             // someone else
 	})
