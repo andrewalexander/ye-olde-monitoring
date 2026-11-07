@@ -1,8 +1,13 @@
 # ye-olde-monitoring
 
-Watch what connects to the things you expose, and what your network looks up.
+_What started with a simple old school page counter plus a desire to self host a media server resulted in .. this_
 
-Putting a service on the internet (for example, Jellyfin: see [ye-olde-jellyfin](https://github.com/andrewalexander/ye-olde-jellyfin)) means strangers start knocking within minutes. This repo is the watchtower. One Go binary, `dnscount`, writes everything into one SQLite file:
+---
+Watch what connects to the services you expose; see what clients on your network are looking up
+
+Putting a service on the Internet (e.g. [ye-olde-jellyfin](https://github.com/andrewalexander/ye-olde-jellyfin)) means scans within minutes/seconds. These can be scary. 
+
+This repo gives some visibility. Probably reinvents a ton of wheels, but a great way for me to get re-familiarized with this kind of data and flow. One Go binary, one SQLite file, simple table based ui accessible to the LAN
 
 - **Every request** to your sites, from Caddy's access log, Go middleware, or imported nginx/Apache logs.
 - **Every DNS lookup and logged connection** on your network, from a UniFi router's remote syslog.
@@ -10,7 +15,9 @@ Putting a service on the internet (for example, Jellyfin: see [ye-olde-jellyfin]
 - **Threat feeds**, matched locally against all of the above, plus optional per-address lookups (InternetDB, AbuseIPDB, Censys).
 - **A LAN-only explorer**: sortable tables that join it all, from an IP to its hits, bans, alerts, lists and the devices that talked to it.
 
-It also has a NixOS module, `services.dnscount`, and a fail2ban guard, `services.dnscount.guard`, which bans scanners at the firewall based on what Caddy logs. There's an old-school visitor counter too, because that's where this started.
+It also has a NixOS module, `services.dnscount`, and a fail2ban guard, `services.dnscount.guard`, which bans scanners at the firewall based on what Caddy logs. 
+
+There's also an old-school visitor counter too, because that's what we set out to build initially 😅
 
 ```sh
 go build -o dnscount ./cmd/dnscount
@@ -19,14 +26,14 @@ go test ./...
 
 ## Install
 
-### NixOS
+### server: NixOS
 
 ```nix
 inputs.monitoring.url = "github:andrewalexander/ye-olde-monitoring";
 # modules = [ monitoring.nixosModules.default { services.dnscount.enable = true; } ];
 ```
 
-The module's units are hardened, and run as their own user. It installs `dnscount-admin`, which runs reports as that user against the service database. Without flakes, import `nix/module.nix` and set `services.dnscount.package = pkgs.callPackage ./nix/package.nix { }`.
+There were attempts at security on the units, and run as their own user. It installs `dnscount-admin`, which runs reports as that user against the service database. Without flakes, import `nix/module.nix` and set `services.dnscount.package = pkgs.callPackage ./nix/package.nix { }`.
 
 ```nix
 services.dnscount = {
@@ -44,13 +51,13 @@ services.caddy.virtualHosts."example.com".logFormat = config.services.dnscount.c
 
 `nix build .#checks.x86_64-linux.module` and `.guard` boot VMs (KVM needed) that test the module and the guard.
 
-### systemd + static binary
+### server: systemd + static binary
 
 ```sh
 make deploy HOST=you@homeserver            # ARCH=arm64 for a Pi / ARM box
 ```
 
-This runs the tests, cross-compiles a static Linux binary, copies it with `deploy/` to the host, and runs `deploy/install.sh` under sudo. Running it again upgrades. The installer creates a `dnscount` system user (in the `caddy` group), and writes `/etc/dnscount/dnscount.env` with a random `/ingest` token on first install only. It also installs hardened units: `dnscount-serve`, `dnscount-caddy-log`, and a daily `dnscount-backup.timer` that keeps 7 copies. For Caddy, add the marked blocks from `deploy/Caddyfile.example` to each site.
+This runs the tests, cross-compiles a static Linux binary, copies it with `deploy/` to the host, and runs `deploy/install.sh` under sudo on the target server. Running it again upgrades. The installer creates a `dnscount` system user (in the `caddy` group), and writes `/etc/dnscount/dnscount.env` with a random `/ingest` token on first install only. It also installs hardened units: `dnscount-serve`, `dnscount-caddy-log`, and a daily `dnscount-backup.timer` that keeps 7 copies. For Caddy, add the marked blocks from `deploy/Caddyfile.example` to each site.
 
 ```sh
 alias dnscount='sudo -u dnscount env DNSCOUNT_DB=/var/lib/dnscount/dnscount.db dnscount'
