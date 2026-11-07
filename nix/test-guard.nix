@@ -26,6 +26,12 @@ in
       # Reachable directly, with a counter limit low enough to trip in a test.
       serve.addr = "0.0.0.0:8080";
       serve.extraArgs = [ "-counter-limit" "3" ];
+      # Bans are read back through the explorer's API. No internet: no feeds.
+      explore = {
+        enable = true;
+        feeds.disable = [ "feodo" "spamhaus-drop" "spamhaus-drop6" "hagezi-tif" "firehol1" "hagezi-tif-ips"
+          "tor-exits" "openphish" "stevenblack" "iptoasn" ];
+      };
       guard = {
         enable = true;
         ports = "80";
@@ -105,7 +111,8 @@ in
 
     with subtest("dnscount records both bans, and neither leaked"):
         server.wait_for_unit("dnscount-fail2ban.service")
-        bans = "curl -fsS http://127.0.0.1:8081/api/bans?ip=${attacker}"
+        server.wait_for_open_port(8090)
+        bans = "curl -fsS http://127.0.0.1:8090/api/bans?ip=${attacker}"
         # Each ban paired with its unban, and the jail's ports carried over.
         for jail in ["caddy-probe", "caddy-404"]:
             server.wait_until_succeeds(

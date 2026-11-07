@@ -1,7 +1,8 @@
 # Local proof of the whole counter/hits path. `docker compose up --build` (or `tilt up`), then:
 #   http://localhost:8000          test page behind Caddy (counter + links that make hits)
 #   http://localhost:8001          examples/app: Go middleware shipping hits to /ingest
-#   http://localhost:8081/api/...  admin API (published on 127.0.0.1 only)
+#   http://localhost:8081/api/health  breaker stats (published on 127.0.0.1 only)
+#   http://localhost:8090          the explorer (published on 127.0.0.1 only)
 #   sh scripts/smoke.sh            scripted check of all of it
 #
 # Same shape as deploy/: Caddy in front, dnscount serve on 8080, a second
@@ -33,12 +34,20 @@ services:
     command: ["ingest-access", "-format", "caddy", "-follow", "/var/log/caddy/access.log"]
     restart: unless-stopped # retries until Caddy has created the log
 
+  explore:
+    <<: *dnscount
+    depends_on: [dnscount]
+    # 0.0.0.0 inside the container so Caddy can reach it; the host only gets
+    # it on 127.0.0.1 via Caddy's :8090 listener.
+    command: ["explore", "-addr", ":8090", "-admin-url", "http://dnscount:8081"]
+
   caddy:
     image: caddy:2.10
     depends_on: [dnscount]
     ports:
       - "8000:80"
       - "127.0.0.1:8081:8081"
+      - "127.0.0.1:8090:8090"
     volumes:
       - ./deploy/local/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./deploy/local/site:/srv:ro

@@ -45,7 +45,7 @@
                                                                    |
  example app :8001 -- Go middleware -- POST /ingest (token) -------+
 
- this page's table <-- Caddy :8081 (localhost only) <-- admin API :8081
+ this page's table <-- Caddy :8090 (localhost only) <-- dnscount explore :8090 (read-only)
 </pre>
   <p class="note">Files: <code>deploy/local/site/index.html</code> (this page), <code>deploy/local/Caddyfile</code>,
      <code>docker-compose.yml</code>. Scripted version of everything below: <code>make smoke</code>.</p>
@@ -97,9 +97,9 @@
   </ul>
 </div>
 
-<h2>4. Recent hits (admin API)</h2>
+<h2>4. Recent hits (explorer API)</h2>
 <div class="box">
-  <p class="note">From <code>http://localhost:8081/api/hits?since=1h</code>, refreshed every 3s. Hits from Caddy's log
+  <p class="note">From <code>http://localhost:8090/api/hits?since=1h</code>, refreshed every 3s. Hits from Caddy's log
      show up about a second after the request, because the tailer checks the file once a second. Breaker trips in the last hour: <b id="trips">?</b></p>
   <div class="wrap">
     <table>
@@ -120,10 +120,10 @@
         because the request came from a trusted proxy (<code>-trusted-proxies</code>). Here it's your Mac as Docker
         sees it, usually the network gateway.</dd>
   </dl>
-  <p class="note">Every endpoint, public and admin, is described in plain text at
-     <a href="http://localhost:8081/api">localhost:8081/api</a>.</p>
-  <p class="note">The admin API has no auth. In production it only listens on localhost (reach it with an SSH tunnel).
-     The <code>:8081</code> Caddy listener this page uses exists only in the local Caddyfile.</p>
+  <p class="note">The full table explorer is at <a href="http://localhost:8090">localhost:8090</a>, and its endpoints
+     are described in plain text at <a href="http://localhost:8090/api">localhost:8090/api</a>.</p>
+  <p class="note">The explorer has no auth. In production it's reachable only from the LAN.
+     The <code>:8090</code> Caddy listener this page uses exists only in the local Caddyfile.</p>
 </div>
 
 <h2>5. Going further</h2>
@@ -133,8 +133,8 @@ docker compose exec dnscount dnscount report hits -top path
 docker compose exec dnscount dnscount report hits -ip &lt;client from the table&gt;
 docker compose exec dnscount dnscount report trips
 docker compose exec dnscount dnscount check        # data sanity checks
-curl -s localhost:8081/api                         # plain-text reference for every endpoint
-curl -s localhost:8081/api/health                  # breaker state + check results
+curl -s localhost:8090/api                         # plain-text reference for every endpoint
+curl -s localhost:8081/api/health                  # breaker stats + check results
 make down                                          # stop and wipe the local data</pre>
 </div>
 
@@ -142,7 +142,7 @@ make down                                          # stop and wipe the local dat
 
 <script>
 // Everything rendered here came from strangers' requests: textContent only.
-const ADMIN = "http://localhost:8081";
+const EXPLORE = "http://localhost:8090";
 
 async function refreshTxt() {
   const r = await fetch("/counter.txt?site=local-test&noinc=1", { cache: "no-store" });
@@ -160,8 +160,8 @@ async function refreshHits() {
   const body = document.getElementById("hits");
   try {
     const [hits, trips] = await Promise.all([
-      fetch(ADMIN + "/api/hits?since=1h&limit=25").then(r => r.json()),
-      fetch(ADMIN + "/api/trips?since=1h").then(r => r.json()),
+      fetch(EXPLORE + "/api/hits?since=1h&limit=25").then(r => r.json()),
+      fetch(EXPLORE + "/api/trips?since=1h").then(r => r.json()),
     ]);
     document.getElementById("trips").textContent = (trips || []).length;
     body.replaceChildren();
@@ -178,7 +178,7 @@ async function refreshHits() {
     }
     if (!body.children.length) body.innerHTML = '<tr><td colspan="7">no hits yet</td></tr>';
   } catch (e) {
-    body.innerHTML = '<tr><td colspan="7" class="err">admin API not reachable on localhost:8081</td></tr>';
+    body.innerHTML = '<tr><td colspan="7" class="err">explorer not reachable on localhost:8090</td></tr>';
   }
 }
 

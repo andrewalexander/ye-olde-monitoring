@@ -1,5 +1,5 @@
-# Local compose only. Mirrors deploy/Caddyfile.example, plus an admin
-# listener so the test page can show recent hits.
+# Local compose only. Mirrors deploy/Caddyfile.example, plus the admin and
+# explorer listeners, so the test page can show recent hits.
 {
 	admin off
 	auto_https off
@@ -31,9 +31,14 @@
 	}
 }
 
-# Admin API, published to the host on 127.0.0.1:8081 only (docker-compose.yml).
-# Never add this to a public Caddyfile: the admin API has no auth.
+# Breaker stats, published to the host on 127.0.0.1:8081 only (docker-compose.yml).
+# Never add these to a public Caddyfile: neither has auth.
 :8081 {
-	header Access-Control-Allow-Origin "http://localhost:8000"
 	reverse_proxy dnscount:8081
+}
+
+# The explorer: its API feeds the test page's recent-hits table.
+:8090 {
+	header Access-Control-Allow-Origin "http://localhost:8000"
+	reverse_proxy explore:8090
 }
