@@ -33,9 +33,18 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"ids_alerts", "policy", "TEXT NOT NULL DEFAULT ''"},
 }
 
-// migrate adds any missing columns. Several dnscount processes open the
+// droppedIndexes were replaced by wider ones in schema.sql (which runs
+// first, so a lookup is never without an index).
+var droppedIndexes = []string{"dns_replies_domain", "dns_replies_answer"}
+
+// migrate adds any missing columns and drops replaced indexes. Several dnscount processes open the
 // database at boot, so another may add a column first: that's fine.
 func migrate(db *sql.DB) error {
+	for _, ix := range droppedIndexes {
+		if _, err := db.Exec(`DROP INDEX IF EXISTS ` + ix); err != nil {
+			return fmt.Errorf("drop index %s: %w", ix, err)
+		}
+	}
 	for _, c := range addedColumns {
 		have, err := hasColumn(db, c.table, c.column)
 		if err != nil {

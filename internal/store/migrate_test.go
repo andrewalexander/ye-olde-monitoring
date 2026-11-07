@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,5 +94,42 @@ func TestAlertColumnsMigrateAndBackfill(t *testing.T) {
 	// Grouping by the new columns works.
 	if kv, err := st.TopAlerts("dst_name", store.AlertFilter{}); err != nil || len(kv) != 2 {
 		t.Errorf("top by dst_name: %+v %v", kv, err)
+	}
+}
+
+// A database from before the composite indexes gets them, and loses the
+// single-column ones they replace.
+func TestReplacesDNSReplyIndexes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`DROP INDEX dns_replies_domain_ts`, `DROP INDEX dns_replies_answer_ts`,
+		`CREATE INDEX dns_replies_domain ON dns_replies(domain)`, `CREATE INDEX dns_replies_answer ON dns_replies(answer)`,
+	} {
+		if _, err := st.DB().Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st.Close()
+	if st, err = store.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var got []string
+	rows, err := st.DB().Query(`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'dns_replies' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var n string
+		rows.Scan(&n)
+		got = append(got, n)
+	}
+	rows.Close()
+	if want := "[dns_replies_answer_ts dns_replies_domain_ts]"; fmt.Sprint(got) != want {
+		t.Errorf("indexes = %v, want %s", got, want)
 	}
 }

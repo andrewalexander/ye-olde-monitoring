@@ -53,8 +53,11 @@ CREATE TABLE IF NOT EXISTS dns_replies (
 	source    TEXT NOT NULL,
 	line_hash TEXT NOT NULL UNIQUE
 );
-CREATE INDEX IF NOT EXISTS dns_replies_domain ON dns_replies(domain);
-CREATE INDEX IF NOT EXISTS dns_replies_answer ON dns_replies(answer);
+-- Lookups are "this name (or address) since T": with ts in the index they
+-- read only the window, not the key's whole history. They replace the
+-- single-column indexes, which migrate drops.
+CREATE INDEX IF NOT EXISTS dns_replies_domain_ts ON dns_replies(domain, ts);
+CREATE INDEX IF NOT EXISTS dns_replies_answer_ts ON dns_replies(answer, ts);
 
 -- Connections seen by the router firewall (only rules with logging on).
 CREATE TABLE IF NOT EXISTS connections (
