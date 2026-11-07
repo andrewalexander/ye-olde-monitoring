@@ -127,12 +127,14 @@ ssh <router> cat /var/log/ulog/threat.log | dnscount ingest-dns -format unifi - 
 
 ### Bans (the guard)
 
-`services.dnscount.guard` runs fail2ban over Caddy's JSON access log. Each line's `client_ip` is the real visitor once Caddy is the only proxy. Only the path is matched, so a search term can't trip a jail.
+`services.dnscount.guard` runs fail2ban over Caddy's JSON access log, and over dnscount's own journal for breaker trips. Each Caddy line's `client_ip` is the real visitor once Caddy is the only proxy. Only the path is matched, so a search term can't trip a jail.
 
 | Jail | Trigger | Ban |
 |---|---|---|
-| `caddy-probe` | 2 requests in an hour for paths no real client asks for (`.env`, `.git`, `.php`, `wp-`, traversal… see `guard.probePaths`) | 1 day |
+| `caddy-probe` | 2 requests in an hour for paths no real client asks for (`.env`, `.git`, `.php`, `wp-`, `aws.json`, `*.log`, traversal… see `guard.probePaths`) | 1 day |
 | `caddy-404` | 20 other 404s in 10 minutes, outside the path prefixes in `guard.notFoundIgnore` | 1 hour |
+| `caddy-401` | 20 401s in 10 minutes (token guessing; an app's own log often has no address for these) | 1 hour |
+| `dnscount-trip` | one trip of a breaker in `guard.tripBreakers` (default: counter, ingest) | 1 hour |
 | `guard.extraJails` | your app's own, such as a failed-login jail | yours |
 
 Each new ban of the same IP lasts twice as long as the last, up to a week, across all jails. `guard.exempt` networks are never banned. Behind an HTTP-proxy VPS the firewall only sees the VPS, so ban there instead.
@@ -144,6 +146,10 @@ dnscount report bans -since 7d                    # LEAK marks a ban that didn't
 sudo fail2ban-client status caddy-probe           # who is banned now
 sudo fail2ban-client set caddy-probe banip <ip>   # by hand (1 day, escalating)
 ```
+
+### Refused logins
+
+Where Jellyfin runs, `dnscount-jellyfin-auth` follows its journal and records each refused login (`Authentication request for <user> has been denied (IP: …)`): the address and the name tried. Its first start backfills whatever the journal still holds. The explorer counts them per inbound address and lists them on the address's page. The names stay on the LAN; lookups only ever see the address.
 
 ### Counter
 
@@ -186,7 +192,7 @@ The admin API (`127.0.0.1:8081`) serves the same data as JSON. `GET /api` there 
 | View | What it's for |
 |---|---|
 | **Flagged** | Every listed IP or domain seen: **in** (it reached us), **out** (the LAN reached it) or **both**, with the LAN devices involved |
-| **Inbound IPs** | Everyone who hit us, got banned, raised an alert or tripped a breaker, with AS, country and lists; worst first |
+| **Inbound IPs** | Everyone who hit us, got banned, raised an alert, tripped a breaker or had a login refused, with AS, country and lists; worst first |
 | **Domains** | What the LAN looked up: listed names, names that resolved to listed addresses, new names |
 | **LAN clients** | Each device and how many flagged names it looked up |
 | **IP and domain pages** | Everything about one indicator: lists (including ones it dropped off), hits, bans, alerts, who asked |
@@ -226,7 +232,7 @@ These services are asked about one address at a time, and their answers are cach
 | AbuseIPDB | abuse score, reports, usage type | hourly | 800/day; 7 days | `ABUSE_IPDB_KEY` |
 | Censys | services, certificates, names, labels | **only when you run it** | 100/month, 25/day; 30 days | `CENSYS_TOKEN` |
 
-They're asked about inbound addresses that are listed, banned, alerted on or tripped a breaker, and about flagged domains and what they resolved to. **Never sent:** private and special-purpose addresses, any address a LAN device has used, internal names, and `lookups.neverLookup`. Every request is logged, and the caps are counted from that log.
+They're asked about inbound addresses that are listed, banned, alerted on, tripped a breaker or had a login refused, and about flagged domains and what they resolved to. **Never sent:** private and special-purpose addresses, any address a LAN device has used, internal names, and `lookups.neverLookup`. Every request is logged, and the caps are counted from that log.
 
 Put the keys in `/var/lib/dnscount/lookups.env` (mode 0640, `root:dnscount`). Without them, only InternetDB runs. To spend Censys credits: run `dnscount enrich -provider censys -dry-run` first, then without `-dry-run`.
 
@@ -245,7 +251,7 @@ The explorer reads the live database. In WAL mode, readers never block writers, 
 
 `/ingest` answers `400` for bad JSON or an invalid hit (the whole batch is rejected), `401` for a missing or wrong token, `413` when the body is too large, and `429` with `Retry-After` only once that IP has tripped the breaker.
 
-A trip writes one row to `breaker_trips` with everything known about the client at that moment. That includes all request headers (`Authorization`/`Cookie` only as a hash and length), the body sample and parse error, the last 20 events, the rate curve, reverse DNS, and what the database already knows about the IP. A flood produces one row per trip, not one per request.
+A trip writes one row to `breaker_trips` with everything known about the client at that moment. That includes all request headers (`Authorization`/`Cookie` only as a hash and length), the body sample and parse error, the last 20 events, the rate curve, reverse DNS, and what the database already knows about the IP. A flood produces one row per trip, not one per request. Each trip also logs `breaker trip: breaker=<name> ip=<ip> reason=<reason>` to dnscount's journal, which the guard's `dnscount-trip` jail bans on.
 
 ## License
 
