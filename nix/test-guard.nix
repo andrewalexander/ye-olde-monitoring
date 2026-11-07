@@ -89,7 +89,7 @@ in
 
     with subtest("tripping a dnscount breaker gets banned"):
         for i in range(6):
-            attacker.succeed("curl -sS --max-time 5 -o /dev/null http://${server}:8080/counter.txt")
+            attacker.succeed("curl -sS --max-time 5 -o /dev/null http://${server}:8080/counter.txt?site=test")
         server.wait_until_succeeds("journalctl -u dnscount-serve.service | grep -q 'breaker trip: breaker=counter ip=${attacker}'", timeout=30)
         server.wait_until_succeeds("fail2ban-client status dnscount-trip | grep -q '${attacker}'", timeout=60)
         attacker.fail("curl -sS --max-time 5 http://${server}/ok")
