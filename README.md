@@ -3,28 +3,32 @@
 _What started with a simple old school page counter plus a desire to self host a media server resulted in .. this_
 
 ---
-Watch what connects to the services you expose; see what clients on your network are looking up
-
 Putting a service on the Internet (e.g. [ye-olde-jellyfin](https://github.com/andrewalexander/ye-olde-jellyfin)) means scans within minutes/seconds. These can be scary. 
 
-This repo gives some visibility. Probably reinvents a ton of wheels, but a great way for me to get re-familiarized with this kind of data and flow. One Go binary, one SQLite file, simple table based ui accessible to the LAN
+This set of packages gives some visibility. Probably reinvents a ton of wheels, but was a great way for me to get re-familiarized with this kind of data and flows. 
 
-- **Every request** to your sites, from Caddy's access log, Go middleware, or imported nginx/Apache logs.
-- **Every DNS lookup and logged connection** on your network, from a UniFi router's remote syslog.
-- **IDS/IPS alerts** from the router, and **fail2ban bans**, each checked afterwards to confirm the ban held.
-- **Threat feeds**, matched locally against all of the above, plus optional per-address lookups (InternetDB, AbuseIPDB, Censys).
-- **A LAN-only explorer**: sortable tables that join it all, from an IP to its hits, bans, alerts, lists and the devices that talked to it.
+One Go binary, one SQLite file, and a simple table based ui on the LAN
 
-It also has a NixOS module, `services.dnscount`, and a fail2ban guard, `services.dnscount.guard`, which bans scanners at the firewall based on what Caddy logs. 
+- **Every request** to your sites. From Caddy's access log, Go middleware, or through imported nginx/Apache logs - `ingest-access -follow`
+- **Every DNS lookup and logged connection** on your network, from a UniFi router's remote syslog. `ingest-dns` for one shot or `dnscount-syslog` stream
+- **IDS/IPS alerts** from the router, and **fail2ban bans**, each checked afterwards to confirm the ban held. from `ingest-syslog` stream
+- **Threat feeds**, matched locally against all of the above, plus optional per-address lookups (InternetDB, AbuseIPDB, Censys). `enrich -provider censys -dry-run`
+- **A LAN-only explorer**: sortable tables that join it all, from an IP to its hits, bans, alerts, lists and the devices that talked to it. 
+
+It also has a NixOS module for it: `services.dnscount`; and so does the companion fail2ban guard, `services.dnscount.guard`, which bans scanners based on what Caddy logs. 
 
 There's also an old-school visitor counter too, because that's what we set out to build initially 😅
+
+<screenshot>
+
+## Install
+
+### binary:
 
 ```sh
 go build -o dnscount ./cmd/dnscount
 go test ./...
 ```
-
-## Install
 
 ### server: NixOS
 
@@ -33,7 +37,9 @@ inputs.monitoring.url = "github:andrewalexander/ye-olde-monitoring";
 # modules = [ monitoring.nixosModules.default { services.dnscount.enable = true; } ];
 ```
 
-There were attempts at security on the units, and run as their own user. It installs `dnscount-admin`, which runs reports as that user against the service database. Without flakes, import `nix/module.nix` and set `services.dnscount.package = pkgs.callPackage ./nix/package.nix { }`.
+Units run as their own user. Enabling the service also installs `dnscount-admin`, which runs reports as that user against the service database. 
+
+Without flakes, import `nix/module.nix` and set `services.dnscount.package = pkgs.callPackage ./nix/package.nix { }`.
 
 ```nix
 services.dnscount = {
@@ -48,6 +54,7 @@ services.dnscount = {
 # Each Caddy site writes the log that dnscount and the guard read:
 services.caddy.virtualHosts."example.com".logFormat = config.services.dnscount.caddyLog.format;
 ```
+#### Test
 
 `nix build .#checks.x86_64-linux.module` and `.guard` boot VMs (KVM needed) that test the module and the guard.
 
@@ -57,7 +64,13 @@ services.caddy.virtualHosts."example.com".logFormat = config.services.dnscount.c
 make deploy HOST=you@homeserver            # ARCH=arm64 for a Pi / ARM box
 ```
 
-This runs the tests, cross-compiles a static Linux binary, copies it with `deploy/` to the host, and runs `deploy/install.sh` under sudo on the target server. Running it again upgrades. The installer creates a `dnscount` system user (in the `caddy` group), and writes `/etc/dnscount/dnscount.env` with a random `/ingest` token on first install only. It also installs hardened units: `dnscount-serve`, `dnscount-caddy-log`, `dnscount-explore` (on 127.0.0.1:8090), an hourly `dnscount-feeds.timer`, and a daily `dnscount-backup.timer` that keeps 7 copies. For Caddy, add the marked blocks from `deploy/Caddyfile.example` to each site, and its LAN-only block for the explorer.
+This runs the tests, cross-compiles a static Linux binary, copies it with `deploy/` to the host, and runs `deploy/install.sh` under sudo on the target server. Running it again upgrades.
+
+The installer creates a `dnscount` system user (in the `caddy` group), and writes `/etc/dnscount/dnscount.env` with a random `/ingest` token on first install only. 
+
+It also installs hardened units: `dnscount-serve`, `dnscount-caddy-log`, `dnscount-explore` (on 127.0.0.1:8090), an hourly `dnscount-feeds.timer`, and a daily `dnscount-backup.timer` that keeps 7 copies. 
+
+For Caddy, add the marked blocks from `deploy/Caddyfile.example` to each site, and its LAN-only block for the explorer.
 
 ```sh
 alias dnscount='sudo -u dnscount env DNSCOUNT_DB=/var/lib/dnscount/dnscount.db dnscount'
@@ -77,14 +90,14 @@ http://localhost:8000 is a retro test page behind Caddy. It has the counter, lin
 
 ### Requests
 
-**From Caddy** (or any access log):
+**From Caddy** (or any access log like Apache or nginx using `combined`):
 
 ```sh
 dnscount ingest-access -format caddy -follow /var/log/caddy/access.log
 dnscount ingest-access -format combined -site www /var/log/nginx/access.log
 ```
 
-**From Go code:** wrap your handler.
+**From Go code:** wrap your http handler; TrustedProxies is still experimental to auto reject requests that do not include an X-Forwarded-For from a trusted host
 
 ```go
 sink := middleware.NewRemoteSink("http://collector:8080/ingest", token)
@@ -96,27 +109,35 @@ http.ListenAndServe(":8000", middleware.Wrap(mux, sink, middleware.Options{
 }))
 ```
 
-`middleware` and `hit` are the importable packages. Everything else is `internal/`, so `NewLocalSink` only works inside this module. Sinks never block the app: a hit is dropped when the buffer is full, and a sink stops trying for 30s after 5 failed writes in a row. There's a full example in `examples/app`.
+`middleware` and `hit` are the importable packages. Everything else is `internal/`. 
+
+Sinks never block the app: a hit is dropped when the buffer is full, and a sink stops trying for 30s after 5 failed writes in a row. There's a full example in `examples/app`.
 
 Values of credential-looking query parameters (`api_key`, `token`, `X-Emby-Token`, ...) are stored as `REDACTED`, in the query and the referer, whichever way a hit comes in. Lines that aren't a normal request (TLS sent to an HTTP port, scanner junk) are kept, with the raw request as the path.
 
 ### DNS lookups and firewall logs (UniFi)
 
+Includes pihole or adguard-like dns filtering using public block lists regularly updated. 
+
 1. `dnscount syslog -listen udp://:5514 -allow <router-ip> -raw ./raw` (or `services.dnscount.syslog`).
 2. In UniFi Network, go to Remote Logging (syslog/SIEM) and point it at that host, port 5514. Turn on security events too, so IDS/IPS alerts arrive as CEF.
 3. Turn on DNS query logging on the router. Read the caveats at the top of each script first:
-   - `ssh root@<router> 'sh -s' < scripts/unifi-dns-blocking.sh` logs, blocks with HaGeZi's lists, and survives reboots. Turn off UniFi's Ad Blocking: its CoreDNS hides the real client.
+   - `ssh root@<router> 'sh -s' < scripts/unifi-dns-blocking.sh` logs, blocks with regularly updated lists, and survives reboots. Turn off UniFi's Ad Blocking: its CoreDNS hides the real client.
    - `ssh root@<router> 'sh -s' < scripts/unifi-enable-dns-log.sh` only logs, and is wiped on reboot.
 4. `ssh root@<router> 'sh -s' < scripts/unifi-neighbors.sh` logs the neighbour table, so IPv6 devices get names.
 5. Firewall lines only appear for rules that have logging turned on.
 
-`-raw` keeps every received line in daily files. Re-ingest with `dnscount ingest-dns -format unifi raw/*.log`: rows dedup on a line hash, so re-imports add nothing. Also supported: `-format dnsmasq` (Pi-hole too) and `-format adguard`. Syslog timestamps carry no timezone, so keep this host's zone the same as the router's. Other ways to get logs off the router are written up in `internal/ingest/syslog/syslog.go`.
+`-raw` keeps every received line in daily files. Re-ingest with `dnscount ingest-dns -format unifi raw/*.log`: rows dedup on a line hash, so re-imports add nothing. This is useful as parsers are added and we want to backfill data we otherwise could have included when it came in the first time.
 
-**LAN devices are named** from DHCP leases, UniFi client events (the alias you set, else the hostname), and the neighbour table. A lookup is named by the device at that address at the time; the history is kept.
+Also supported: `-format dnsmasq` (Pi-hole too) and `-format adguard`. Syslog timestamps carry no timezone, so keep this host's zone the same as the router's. Other ways to get logs off the router are written up in `internal/ingest/syslog/syslog.go`.
+
+**LAN devices are named** from DHCP leases, UniFi client events (the alias you set, else the hostname), and the neighbour table for ipv6. 
+
+A lookup is named by the device at that address at the time; the result is stored and history is kept, meaning you can see every IP that MAC address has ever had in history. 
 
 ### IDS/IPS alerts
 
-The router's CEF events name the LAN device (`dst_name`/`dst_mac`) and keep its `direction` and the `policy` that fired.
+The router's CEF (Common Event Format) events give us the name of the LAN device (`dst_name`/`dst_mac`), its `direction`, and the `policy` that fired.
 
 ```sh
 dnscount report alerts -since 24h                  # newest first, with how many requests each source made to us
@@ -127,7 +148,7 @@ ssh <router> cat /var/log/ulog/threat.log | dnscount ingest-dns -format unifi - 
 
 ### Bans (the guard)
 
-`services.dnscount.guard` runs fail2ban over Caddy's JSON access log, and over dnscount's own journal for breaker trips. Each Caddy line's `client_ip` is the real visitor once Caddy is the only proxy. Only the path is matched, so a search term can't trip a jail.
+`services.dnscount.guard` runs fail2ban, banning IPs based on rules from Caddy's JSON access log or dnscount's journal for breaker trips. Each Caddy line's `client_ip` is the real visitor. Only the path is matched, so a search term can't trip a jail when a user is using the website normally.
 
 | Jail | Trigger | Ban |
 |---|---|---|
@@ -137,7 +158,7 @@ ssh <router> cat /var/log/ulog/threat.log | dnscount ingest-dns -format unifi - 
 | `dnscount-trip` | one trip of a breaker in `guard.tripBreakers` (default: counter, ingest) | 1 hour |
 | `guard.extraJails` | your app's own, such as a failed-login jail | yours |
 
-Each new ban of the same IP lasts twice as long as the last, up to a week, across all jails. `guard.exempt` networks are never banned. Behind an HTTP-proxy VPS the firewall only sees the VPS, so ban there instead.
+Each new ban of the same IP lasts twice as long as the last, up to a week, across all jails. `guard.exempt` networks are never banned (like LAN addresses). 
 
 `dnscount-fail2ban` reads the bans from fail2ban's journal. `report bans` pairs each ban with its unban, and counts requests that got through **during** the ban on a port the jail blocks. Any of those means the ban leaked.
 
@@ -159,9 +180,9 @@ Where Jellyfin runs, `dnscount-jellyfin-auth` follows its journal and records ea
 
 Each IP gets 30 counts per minute (`-counter-limit`). Requests over the limit still get the image but aren't counted.
 
-## Reading it
+## Reporting and Exploring 
 
-### Reports
+### CLI Reports
 
 ```sh
 dnscount report dns -domain example.com      # who looked it (and subdomains) up, and connections to what it resolved to
@@ -177,17 +198,23 @@ dnscount report flagged -since 7d            # everything on a threat list, in o
 dnscount check                               # data sanity checks
 ```
 
-**A daily routine** for an exposed service:
+**An example daily routine** for a service you are monitoring:
 1. `report alerts -action allowed -since 24h`: did the IPS let anything through?
 2. `report hits -status 404 -top ip -since 24h`: is there a scanner the jails missed? Ban it, and add any new paths to `guard.probePaths`.
-3. `report bans -since 7d`: is there a `LEAK`?
+3. `report bans -since 7d`: who have we blocked? have they managed to accrue any hits since the ban?
 4. `report hits -new ip -site <site> -since 24h`: who is new?
 
-The explorer serves the same data as JSON; `GET /api` there is a plain-text reference for every endpoint (from `internal/explore/api.txt`). `dnscount serve`'s localhost admin listener (`127.0.0.1:8081`) only answers `/api/health`: the live breaker stats.
+### API 
+
+The explorer and CLI use the same data you can get via the JSON api
+
+If you `GET /api`, there is a plain-text reference for every endpoint (from `internal/explore/api.txt`). `dnscount serve`'s localhost admin listener (`127.0.0.1:8081`) only answers `/api/health`: the live breaker stats.
 
 ### The explorer
 
-`dnscount explore` (`services.dnscount.explore`) is a separate process that reads the live database read-only and serves tables on localhost. Put it behind a LAN-only proxy. It has no password.
+<screenshot>
+
+`dnscount explore` (`services.dnscount.explore`) is a separate process that reads the live database read-only and serves a UI on localhost. Put it behind a LAN-only proxy. It has no password.
 
 | View | What it's for |
 |---|---|
@@ -203,6 +230,8 @@ The explorer serves the same data as JSON; `GET /api` there is a plain-text refe
 Its API is documented in `internal/explore/api.txt`.
 
 ### Threat feeds
+
+<screenshot>
 
 These are free, and need no account. `dnscount-feeds` downloads them hourly, each one only when it's due, and matches them on the box. Nothing about your traffic leaves the box.
 
@@ -226,6 +255,8 @@ When a list changes, every indicator seen in the last 90 days is re-checked agai
 
 ### Outside lookups
 
+<screenshot>
+
 These services are asked about one address at a time, and their answers are cached. The answers are context shown next to the verdict; they never flag anything themselves.
 
 | Service | Tells you | Runs | Default caps | Key |
@@ -244,6 +275,7 @@ The explorer reads the live database. In WAL mode, readers never block writers, 
 
 ## Auth and circuit breakers
 
+Depending on the component, different auth and limits apply. a circuit breaker trip leads to a ban
 | Endpoint | Auth | Limits |
 |---|---|---|
 | counter | none | 30/min per IP |

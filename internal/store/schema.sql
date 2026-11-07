@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS dns_replies (
 -- read only the window, not the key's whole history.
 CREATE INDEX IF NOT EXISTS dns_replies_domain_ts ON dns_replies(domain, ts);
 CREATE INDEX IF NOT EXISTS dns_replies_answer_ts ON dns_replies(answer, ts);
+-- A domain's blocked count. Blocked replies are few, so this skips the
+-- status check on every reply of a busy domain.
+CREATE INDEX IF NOT EXISTS dns_replies_blocked ON dns_replies(domain, ts) WHERE status = 'blocked';
 
 -- Connections seen by the router firewall (only rules with logging on).
 CREATE TABLE IF NOT EXISTS connections (

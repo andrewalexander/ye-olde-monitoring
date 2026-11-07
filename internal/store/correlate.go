@@ -337,6 +337,10 @@ func (s *Store) flaggedAnswers(since time.Time) (map[string]*AnswerIntel, error)
 	return out, rows.Err()
 }
 
+// blockedCount is a domain's blocked replies since a time. The literal
+// status = 'blocked' is what lets SQLite use the dns_replies_blocked index.
+const blockedCount = `SELECT count(*) FROM dns_replies WHERE domain = ? AND status = 'blocked' AND ts >= ?`
+
 // DomainRow is one domain the LAN looked up.
 type DomainRow struct {
 	Domain  string       `json:"domain"`
@@ -437,8 +441,7 @@ func (s *Store) Domains(q ListQuery) ([]DomainRow, error) {
 	})
 	out = out[:min(len(out), q.Limit)]
 	for i := range out {
-		if err := s.queryRow(`SELECT count(*) FROM dns_replies WHERE domain = ? AND status = 'blocked' AND ts >= ?`,
-			out[i].Domain, fmtTime(q.Since)).Scan(&out[i].Blocked); err != nil {
+		if err := s.queryRow(blockedCount, out[i].Domain, fmtTime(q.Since)).Scan(&out[i].Blocked); err != nil {
 			return nil, err
 		}
 	}
