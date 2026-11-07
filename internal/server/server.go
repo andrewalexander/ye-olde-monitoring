@@ -20,8 +20,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/andrewalexander/ye-olde-monitoring/hit"
-	"github.com/andrewalexander/ye-olde-monitoring/internal/breaker"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/counter"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/guard"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
 	"github.com/andrewalexander/ye-olde-monitoring/middleware"
 )
@@ -44,15 +44,15 @@ type Config struct {
 	IngestPerMinute    int
 	IngestBadPerMinute int
 	Cooldown           time.Duration
-	OnTrip, OnEnd      func(breaker.Trip)
+	OnTrip, OnEnd      func(guard.Trip)
 	Now                func() time.Time
 	Log                *log.Logger
 }
 
 type Server struct {
 	cfg     Config
-	Counter *breaker.Breaker
-	Ingest  *breaker.Breaker
+	Counter *guard.Breaker
+	Ingest  *guard.Breaker
 }
 
 func New(cfg Config) *Server {
@@ -74,8 +74,8 @@ func New(cfg Config) *Server {
 	if cfg.Log == nil {
 		cfg.Log = log.Default()
 	}
-	mk := func(name string, max, maxBad int) *breaker.Breaker {
-		return breaker.New(breaker.Config{
+	mk := func(name string, max, maxBad int) *guard.Breaker {
+		return guard.New(guard.Config{
 			Name: name, Window: time.Minute, Cooldown: cfg.Cooldown, Max: max, MaxBad: maxBad,
 			Now: cfg.Now, OnTrip: cfg.OnTrip, OnEnd: cfg.OnEnd,
 		})
@@ -211,7 +211,7 @@ func checkToken(r *http.Request, want string) bool {
 
 // event builds the breaker event for a request: a short summary for the
 // ring buffer and the full detail in case this request is the one that trips.
-func (s *Server) event(r *http.Request, body []byte, problem string) breaker.Event {
+func (s *Server) event(r *http.Request, body []byte, problem string) guard.Event {
 	ip, xff := hit.ClientIP(r, s.cfg.TrustedProxies)
 	sum, _ := json.Marshal(struct {
 		Method string `json:"m"`
@@ -222,7 +222,7 @@ func (s *Server) event(r *http.Request, body []byte, problem string) breaker.Eve
 		Len    int64  `json:"len,omitempty"`
 		Err    string `json:"err,omitempty"`
 	}{r.Method, hit.Clean(r.RequestURI, 512), ip, hit.Clean(xff, 256), hit.Clean(r.UserAgent(), 256), r.ContentLength, problem})
-	return breaker.Event{Data: string(sum), Trigger: RequestDetail(r, ip, body, problem)}
+	return guard.Event{Data: string(sum), Trigger: RequestDetail(r, ip, body, problem)}
 }
 
 // RequestDetail is everything we can say about a request, for trip forensics.

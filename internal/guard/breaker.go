@@ -1,10 +1,10 @@
-// Package breaker is a dumb fixed-window circuit breaker keyed by client
+// Package guard is a dumb fixed-window circuit breaker keyed by client
 // (usually an IP). A key trips when it sends too many events, too many bad
 // events, or too high a ratio of bad events in one window; it is then
 // rejected until its cooldown ends. Each key keeps a small ring buffer of
 // recent events so that when it trips we have evidence, not just the last
 // request.
-package breaker
+package guard
 
 import (
 	"context"

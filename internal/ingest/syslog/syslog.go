@@ -40,7 +40,7 @@ import (
 	"time"
 
 	"github.com/andrewalexander/ye-olde-monitoring/hit"
-	"github.com/andrewalexander/ye-olde-monitoring/internal/breaker"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/guard"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/dns"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/fw"
@@ -66,7 +66,7 @@ type Config struct {
 	// PerMinute is the most lines one source may send per minute.
 	PerMinute     int
 	Cooldown      time.Duration
-	OnTrip, OnEnd func(breaker.Trip)
+	OnTrip, OnEnd func(guard.Trip)
 	Now           func() time.Time
 	Log           *log.Logger
 }
@@ -83,9 +83,9 @@ type Stats struct {
 type Listener struct {
 	cfg Config
 	// Sources is per allowed source: line rate plus a malformed-ratio trip.
-	Sources *breaker.Breaker
+	Sources *guard.Breaker
 	// Strangers trips on the first line from a source not on the allowlist.
-	Strangers *breaker.Breaker
+	Strangers *guard.Breaker
 	parser    ingest.LineParser
 
 	mu       sync.Mutex
@@ -118,11 +118,11 @@ func New(cfg Config) (*Listener, error) {
 	}
 	return &Listener{
 		cfg: cfg,
-		Sources: breaker.New(breaker.Config{
+		Sources: guard.New(guard.Config{
 			Name: "syslog", Window: time.Minute, Cooldown: cfg.Cooldown, Max: cfg.PerMinute,
 			BadRatio: 0.5, MinEvents: 20, Now: cfg.Now, OnTrip: cfg.OnTrip, OnEnd: cfg.OnEnd,
 		}),
-		Strangers: breaker.New(breaker.Config{
+		Strangers: guard.New(guard.Config{
 			Name: "syslog-not-allowed", Window: time.Minute, Cooldown: 2 * cfg.Cooldown, MaxBad: 1,
 			Now: cfg.Now, OnTrip: cfg.OnTrip, OnEnd: cfg.OnEnd,
 		}),
@@ -157,9 +157,9 @@ func (l *Listener) HandleLine(src netip.AddrPort, transport, line string) {
 		}
 		return d
 	}
-	ev := func(problem string) breaker.Event {
+	ev := func(problem string) guard.Event {
 		sum, _ := json.Marshal(map[string]any{"port": src.Port(), "line": hit.Clean(line, 1024), "err": problem})
-		return breaker.Event{Data: string(sum), Trigger: detail(problem)}
+		return guard.Event{Data: string(sum), Trigger: detail(problem)}
 	}
 	l.mu.Lock()
 	l.stats.Lines++

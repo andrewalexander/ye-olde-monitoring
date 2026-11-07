@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/andrewalexander/ye-olde-monitoring/internal/breaker"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/guard"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
 )
 
@@ -25,7 +25,7 @@ func (s *Server) Admin(extraHealth func() map[string]any) http.Handler {
 		mux.HandleFunc(pattern, h)
 	}
 	mux.HandleFunc("GET /api/health", rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
-		h := map[string]any{"breakers": []breaker.Stats{s.Counter.Stats(), s.Ingest.Stats()}}
+		h := map[string]any{"breakers": []guard.Stats{s.Counter.Stats(), s.Ingest.Stats()}}
 		if extraHealth != nil {
 			for k, v := range extraHealth() {
 				h[k] = v

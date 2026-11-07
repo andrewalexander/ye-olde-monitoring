@@ -15,13 +15,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andrewalexander/ye-olde-monitoring/internal/breaker"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/guard"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
 )
 
 type job struct {
 	end  bool
-	trip breaker.Trip
+	trip guard.Trip
 }
 
 type Recorder struct {
@@ -34,7 +34,7 @@ type Recorder struct {
 	closed  bool
 	jobs    chan job
 	ids     map[string]int64 // breaker/seq -> row id
-	pending map[string]breaker.Trip
+	pending map[string]guard.Trip
 	wg      sync.WaitGroup
 }
 
@@ -47,16 +47,16 @@ func New(st *store.Store, errLog io.Writer) *Recorder {
 		Resolve: net.DefaultResolver.LookupAddr,
 		jobs:    make(chan job, 256),
 		ids:     map[string]int64{},
-		pending: map[string]breaker.Trip{},
+		pending: map[string]guard.Trip{},
 	}
 	r.wg.Add(1)
 	go r.loop()
 	return r
 }
 
-// OnTrip and OnEnd plug into breaker.Config.
-func (r *Recorder) OnTrip(t breaker.Trip) { r.send(job{trip: t}) }
-func (r *Recorder) OnEnd(t breaker.Trip)  { r.send(job{end: true, trip: t}) }
+// OnTrip and OnEnd plug into guard.Config.
+func (r *Recorder) OnTrip(t guard.Trip) { r.send(job{trip: t}) }
+func (r *Recorder) OnEnd(t guard.Trip)  { r.send(job{end: true, trip: t}) }
 
 func (r *Recorder) send(j job) {
 	r.mu.Lock()
@@ -106,15 +106,15 @@ func (r *Recorder) loop() {
 // Detail is what goes in breaker_trips.detail_json.
 type Detail struct {
 	Trigger     any               `json:"trigger,omitempty"`
-	Samples     []breaker.Sample  `json:"samples"`
+	Samples     []guard.Sample    `json:"samples"`
 	RateCurve   []int             `json:"rate_curve"`
 	ReverseDNS  []string          `json:"reverse_dns,omitempty"`
 	History     *store.IPHistory  `json:"history,omitempty"`
-	LateSamples []breaker.Sample  `json:"late_samples,omitempty"`
+	LateSamples []guard.Sample    `json:"late_samples,omitempty"`
 	Notes       map[string]string `json:"notes,omitempty"`
 }
 
-func (r *Recorder) record(k string, t breaker.Trip) {
+func (r *Recorder) record(k string, t guard.Trip) {
 	d := Detail{Trigger: t.Trigger, Samples: t.Samples, RateCurve: t.Curve, Notes: map[string]string{}}
 	if _, err := netip.ParseAddr(t.Key); err == nil {
 		if r.Resolve != nil {
@@ -153,7 +153,7 @@ func (r *Recorder) record(k string, t breaker.Trip) {
 		t.Breaker, t.Key, t.Reason, t.WindowEvents, t.WindowBad, id)
 }
 
-func (r *Recorder) finish(k string, t breaker.Trip) {
+func (r *Recorder) finish(k string, t guard.Trip) {
 	id := r.ids[k]
 	delete(r.ids, k)
 	late, _ := json.Marshal(t.LateSamples)
@@ -164,10 +164,10 @@ func (r *Recorder) finish(k string, t breaker.Trip) {
 	r.log.Printf("%s trip #%d for %s ended; %d suppressed during cooldown", t.Breaker, id, t.Key, t.Suppressed)
 }
 
-func (r *Recorder) dump(why string, t breaker.Trip, detail json.RawMessage) {
+func (r *Recorder) dump(why string, t guard.Trip, detail json.RawMessage) {
 	b, _ := json.Marshal(struct {
 		Why    string          `json:"why"`
-		Trip   breaker.Trip    `json:"trip"`
+		Trip   guard.Trip      `json:"trip"`
 		Detail json.RawMessage `json:"detail,omitempty"`
 	}{why, t, detail})
 	r.log.Printf("could not store trip: %s", b)
