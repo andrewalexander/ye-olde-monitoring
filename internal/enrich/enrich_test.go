@@ -111,7 +111,7 @@ func TestFetch(t *testing.T) {
 			return
 		}
 		if r.URL.Query().Get("key") != "" && r.URL.Query().Get("key") != "sekrit" {
-			http.Error(w, "bad key", 403)
+			http.Error(w, "bad key", http.StatusForbidden)
 			return
 		}
 		w.Header().Set("ETag", `"v1"`)

@@ -1,5 +1,6 @@
-// Package counter renders the old-school "you are visitor #000123" image.
-package counter
+// The old-school "you are visitor #000123" image.
+
+package server
 
 import (
 	"fmt"
@@ -7,8 +8,8 @@ import (
 	"strings"
 )
 
-// MinDigits is the zero-padded width of the counter.
-const MinDigits = 6
+// counterDigits is the zero-padded width of the counter.
+const counterDigits = 6
 
 const (
 	cellW = 16
@@ -16,9 +17,9 @@ const (
 	pad   = 2
 )
 
-// SVG renders n as green digits in black boxes.
-func SVG(n int64) []byte {
-	digits := fmt.Sprintf("%0*d", MinDigits, max(n, 0))
+// counterSVG renders n as green digits in black boxes.
+func counterSVG(n int64) []byte {
+	digits := fmt.Sprintf("%0*d", counterDigits, max(n, 0))
 	w := len(digits)*(cellW+pad) + pad
 	h := cellH + 2*pad
 	var b strings.Builder
@@ -35,12 +36,12 @@ func SVG(n int64) []byte {
 	return []byte(b.String())
 }
 
-// JS is a snippet a page can include with
+// counterJS is a snippet a page can include with
 //
 //	<script src="https://collector/counter.js" data-site="blog"></script>
 //
 // It drops the counter image right where the script tag is.
-const JS = `(function () {
+const counterJS = `(function () {
   var s = document.currentScript;
   if (!s) return;
   var site = s.getAttribute("data-site") || location.hostname;

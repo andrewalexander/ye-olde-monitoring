@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/andrewalexander/ye-olde-monitoring/hit"
-	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
 )
 
 // Sinks buffer hits and write them in batches from a background goroutine.
@@ -130,7 +129,12 @@ func (b *batcher) Stats() SinkStats {
 // LocalSink writes hits to a store in the same process.
 type LocalSink struct{ *batcher }
 
-func NewLocalSink(st *store.Store) *LocalSink {
+// HitStore is what a LocalSink writes to; dnscount's store is one.
+type HitStore interface {
+	InsertHits([]hit.Hit) (int, error)
+}
+
+func NewLocalSink(st HitStore) *LocalSink {
 	return &LocalSink{newBatcher(time.Second, func(hs []hit.Hit) error {
 		_, err := st.InsertHits(hs)
 		return err

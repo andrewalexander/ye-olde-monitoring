@@ -21,7 +21,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/andrewalexander/ye-olde-monitoring/hit"
-	"github.com/andrewalexander/ye-olde-monitoring/internal/counter"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/guard"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
 	"github.com/andrewalexander/ye-olde-monitoring/middleware"
@@ -101,7 +100,7 @@ func (s *Server) Public() http.Handler {
 	mux.HandleFunc("GET /counter.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
-		io.WriteString(w, counter.JS)
+		io.WriteString(w, counterJS)
 	})
 	mux.HandleFunc("/ingest", s.ingest)
 	return mux
@@ -137,7 +136,7 @@ func (s *Server) counter(format string) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "image/svg+xml")
-		w.Write(counter.SVG(n))
+		w.Write(counterSVG(n))
 	}
 }
 
