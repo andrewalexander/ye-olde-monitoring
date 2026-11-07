@@ -681,3 +681,25 @@ func TestIndexV3ClearsRoleConn(t *testing.T) {
 		t.Errorf("hits cursor = %d, want 42 (no re-read)", last)
 	}
 }
+
+// A LAN device known only from the neighbour table (it never used the
+// router's DNS) is still LAN: not inbound, and IsLAN says so.
+func TestNeighbourOnlyDeviceIsLAN(t *testing.T) {
+	x := openExplorer(t)
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	const v6 = "2001:db8:5::7"
+	x.primary.InsertRecords([]ingest.Record{{Seen: &ingest.Sighting{Hash: "n1", TS: now.Add(-time.Hour), IP: v6,
+		MAC: "02:00:00:00:00:07", Source: "router-neigh"}}})
+	x.primary.InsertHits([]hit.Hit{{Hash: "h1", TS: now.Add(-time.Hour), Site: "jf", Source: "caddy", ClientIP: v6, Path: "/", Status: 200},
+		{Hash: "h2", TS: now.Add(-time.Hour), Site: "jf", Source: "caddy", ClientIP: "203.0.113.5", Path: "/", Status: 200}})
+	in, err := x.ro.InboundIPs(store.ListQuery{Since: now.Add(-24 * time.Hour)}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(in) != 1 || in[0].IP != "203.0.113.5" {
+		t.Errorf("inbound = %+v, want only 203.0.113.5", in)
+	}
+	if lan, err := x.ro.IsLAN(v6); err != nil || !lan {
+		t.Errorf("IsLAN(%s) = %v, %v", v6, lan, err)
+	}
+}

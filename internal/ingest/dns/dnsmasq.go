@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/andrewalexander/ye-olde-monitoring/internal/enrich"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest"
 )
 
@@ -51,7 +52,7 @@ func (Dnsmasq) ParseLine(line string, now time.Time) (ingest.Record, error) {
 			return ingest.Record{}, errors.New("query from non-IP " + m[3])
 		}
 		return ingest.Record{Query: &ingest.DNSQuery{
-			TS: h.TS, ClientIP: ip.String(), Domain: ingest.NormDomain(m[2]), QType: strings.ToUpper(m[1]), Source: "dnsmasq",
+			TS: h.TS, ClientIP: ip.String(), Domain: enrich.NormDomain(m[2]), QType: strings.ToUpper(m[1]), Source: "dnsmasq",
 		}}, nil
 	case strings.HasPrefix(msg, "forwarded "):
 		m := fwdRE.FindStringSubmatch(msg)
@@ -59,7 +60,7 @@ func (Dnsmasq) ParseLine(line string, now time.Time) (ingest.Record, error) {
 			return ingest.Record{}, errors.New("malformed forwarded line")
 		}
 		return ingest.Record{Reply: &ingest.DNSReply{
-			TS: h.TS, Domain: ingest.NormDomain(m[1]), Answer: m[2], Status: "forwarded", Source: "dnsmasq",
+			TS: h.TS, Domain: enrich.NormDomain(m[1]), Answer: m[2], Status: "forwarded", Source: "dnsmasq",
 		}}, nil
 	}
 	if m := isRE.FindStringSubmatch(msg); m != nil {
@@ -71,7 +72,7 @@ func (Dnsmasq) ParseLine(line string, now time.Time) (ingest.Record, error) {
 			status = "blocked"
 		}
 		return ingest.Record{Reply: &ingest.DNSReply{
-			TS: h.TS, Domain: ingest.NormDomain(m[2]), Answer: strings.TrimSpace(m[3]), Status: status, Source: "dnsmasq",
+			TS: h.TS, Domain: enrich.NormDomain(m[2]), Answer: strings.TrimSpace(m[3]), Status: status, Source: "dnsmasq",
 		}}, nil
 	}
 	// Startup banners, DHCP, "query" to upstream with no client, etc.

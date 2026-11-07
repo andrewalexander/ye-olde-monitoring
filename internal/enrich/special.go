@@ -1,9 +1,6 @@
 package enrich
 
-import (
-	"net/netip"
-	"strings"
-)
+import "net/netip"
 
 // Special is an entry from IANA's special-purpose address registries
 // (RFC 6890), or a special-use name.
@@ -88,7 +85,7 @@ var specialNames = map[string]Special{
 
 // SpecialDomain says whether d is a special-use name with a known purpose.
 func SpecialDomain(d string) (Special, bool) {
-	s, ok := specialNames[strings.ToLower(strings.TrimSuffix(d, "."))]
+	s, ok := specialNames[NormDomain(d)]
 	return s, ok
 }
 

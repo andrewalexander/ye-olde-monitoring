@@ -13,12 +13,17 @@ import (
 	"github.com/andrewalexander/ye-olde-monitoring/internal/enrich"
 )
 
+// lanIPs is every LAN address as a subquery: those that used the router's
+// DNS (lan_clients) and those seen by DHCP, UniFi or the neighbour table.
+// It needs the explorer's database attached.
+const lanIPs = `(SELECT ip FROM enrich.lan_clients UNION SELECT ip FROM lan_sightings WHERE ip != '')`
+
 // LANAddresses is every address seen as a LAN device: used the router's DNS
 // (the explorer's lan_clients) or appeared in DHCP, UniFi client events or
 // the neighbour table (lan_sightings). The privacy gate refuses all of them.
 // It needs the explorer's database attached (OpenReadOnly).
 func (s *Store) LANAddresses() (map[string]bool, error) {
-	ips, err := s.column(`SELECT ip FROM enrich.lan_clients UNION SELECT ip FROM lan_sightings WHERE ip != ''`)
+	ips, err := s.column(`SELECT ip FROM ` + lanIPs)
 	out := map[string]bool{}
 	for _, ip := range ips {
 		if a, err := netip.ParseAddr(ip); err == nil {

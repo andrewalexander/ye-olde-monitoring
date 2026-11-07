@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/andrewalexander/ye-olde-monitoring/internal/enrich"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest"
 )
 
@@ -42,7 +43,7 @@ func (AdGuard) ParseLine(line string, _ time.Time) (ingest.Record, error) {
 	if err != nil {
 		return ingest.Record{}, errors.New("IP: " + err.Error())
 	}
-	domain := ingest.NormDomain(l.QH)
+	domain := enrich.NormDomain(l.QH)
 	status := "reply"
 	switch {
 	case l.Result.IsFiltered:

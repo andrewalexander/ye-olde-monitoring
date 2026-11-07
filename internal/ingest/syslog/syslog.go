@@ -131,15 +131,7 @@ func New(cfg Config) (*Listener, error) {
 	}, nil
 }
 
-func (l *Listener) allowed(a netip.Addr) bool {
-	a = a.Unmap()
-	for _, p := range l.cfg.Allow {
-		if p.Contains(a) {
-			return true
-		}
-	}
-	return false
-}
+func (l *Listener) allowed(a netip.Addr) bool { return hit.InPrefixes(a, l.cfg.Allow) }
 
 // HandleLine processes one syslog line from src.
 func (l *Listener) HandleLine(src netip.AddrPort, transport, line string) {

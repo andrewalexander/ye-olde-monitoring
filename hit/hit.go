@@ -212,9 +212,11 @@ func RemoteAddr(r *http.Request) string {
 
 func inAny(ip string, nets []netip.Prefix) bool {
 	a, err := netip.ParseAddr(ip)
-	if err != nil {
-		return false
-	}
+	return err == nil && InPrefixes(a, nets)
+}
+
+// InPrefixes says whether a (IPv4-mapped or not) is in any of nets.
+func InPrefixes(a netip.Addr, nets []netip.Prefix) bool {
 	a = a.Unmap()
 	for _, n := range nets {
 		if n.Contains(a) {

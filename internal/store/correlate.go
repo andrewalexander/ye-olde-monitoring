@@ -21,10 +21,6 @@ type ClientCount struct {
 	Count int64  `json:"count"`
 }
 
-func (s *Store) lanClients() (map[string]bool, error) {
-	return s.columnSet(`SELECT ip FROM enrich.lan_clients`)
-}
-
 // IsLAN says whether ip is private or has used the router's DNS.
 func (s *Store) IsLAN(ip string) (bool, error) {
 	a, public := enrich.PublicIP(ip)
@@ -32,7 +28,7 @@ func (s *Store) IsLAN(ip string) (bool, error) {
 		return a.IsValid(), nil
 	}
 	var n int
-	err := s.queryRow(`SELECT count(*) FROM enrich.lan_clients WHERE ip = ?`, a.String()).Scan(&n)
+	err := s.queryRow(`SELECT count(*) FROM `+lanIPs+` WHERE ip = ?`, a.String()).Scan(&n)
 	return n > 0, err
 }
 
@@ -95,7 +91,7 @@ func (s *Store) InboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 	if err := q.norm(); err != nil {
 		return nil, err
 	}
-	lan, err := s.lanClients()
+	lan, err := s.LANAddresses()
 	if err != nil {
 		return nil, err
 	}
@@ -643,7 +639,7 @@ func (s *Store) Flagged(q FlaggedQuery) ([]FlaggedRow, error) {
 		// Few indicators are special-purpose, and which are is decided in Go,
 		// so scan the window's indicators for them.
 		rows, err := s.query(`SELECT indicator, kind, roles, first_seen, last_seen, 0 FROM enrich.indicators
-			WHERE last_seen >= ? AND indicator NOT IN (SELECT ip FROM enrich.lan_clients)`, since)
+			WHERE last_seen >= ? AND indicator NOT IN `+lanIPs, since)
 		if err != nil {
 			return nil, err
 		}
@@ -975,7 +971,7 @@ func (s *Store) nameCounts(cs []ClientCount) error {
 // its verdict: a current downloaded-list match on something that isn't a
 // LAN device. Reserved addresses are filtered in Go (enrich.Reserved).
 const listedNotLAN = `e.current = 1 AND e.method = 'downloaded'
-	AND e.indicator NOT IN (SELECT ip FROM enrich.lan_clients)`
+	AND e.indicator NOT IN ` + lanIPs
 
 // Overview is the explorer's landing page numbers.
 type Overview struct {

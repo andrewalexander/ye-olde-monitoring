@@ -267,11 +267,6 @@ func StripPRI(line string) string {
 	return line
 }
 
-// NormDomain lowercases and drops a trailing dot.
-func NormDomain(d string) string {
-	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(d)), ".")
-}
-
 // Multi tries each parser in turn; the first that doesn't skip wins. UniFi
 // syslog is Multi{dns.Dnsmasq{}, fw.IPTables{}}.
 type Multi []LineParser

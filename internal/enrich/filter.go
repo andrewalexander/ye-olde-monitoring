@@ -22,10 +22,16 @@ func PublicIP(ip string) (netip.Addr, bool) {
 
 var internalSuffixes = []string{".lan", ".local", ".home.arpa", ".arpa", ".internal", ".localdomain", ".home", ".corp"}
 
+// NormDomain is how every name is compared and stored: trimmed, lowercased,
+// without a trailing dot.
+func NormDomain(d string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(d)), ".")
+}
+
 // PublicDomain normalises d and says whether it's an internet name worth
 // matching: not single-label, not a reverse-DNS name, not a LAN suffix.
 func PublicDomain(d string) (string, bool) {
-	d = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(d), "."))
+	d = NormDomain(d)
 	if !validDomain(d) {
 		return d, false
 	}

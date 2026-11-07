@@ -44,7 +44,7 @@ func (g *Gate) Allow(indicator string) (bool, string) {
 		return false, "special-use name (" + s.Name + ")"
 	}
 	for _, own := range g.Own {
-		own = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(own), "."))
+		own = NormDomain(own)
 		if own != "" && (d == own || strings.HasSuffix(d, "."+own)) {
 			return false, "one of our own names (" + own + ")"
 		}

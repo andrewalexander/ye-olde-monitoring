@@ -251,7 +251,7 @@ var notListable = map[string]bool{
 }
 
 func (l *List) add(s, detail string) {
-	s = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s), "."))
+	s = NormDomain(s)
 	if s == "" || notListable[s] {
 		return
 	}
@@ -318,7 +318,7 @@ func (l *List) Match(indicator string) (via, detail string, ok bool) {
 		}
 		return "", "", false
 	}
-	d := strings.ToLower(strings.TrimSuffix(indicator, "."))
+	d := NormDomain(indicator)
 	for {
 		if det, ok := l.domains[d]; ok {
 			return d, det, true

@@ -77,7 +77,7 @@ func (x *Explorer) Handler() http.Handler {
 		return st.Domains(list(p))
 	})
 	routes["GET /api/domain/{domain}"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
-		d := strings.ToLower(strings.TrimSuffix(r.PathValue("domain"), "."))
+		d := enrich.NormDomain(r.PathValue("domain"))
 		if d == "" || strings.ContainsAny(d, " /") {
 			return nil, server.ErrBadParam("not a domain")
 		}
