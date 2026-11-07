@@ -23,6 +23,9 @@ in
     services.dnscount = {
       enable = true;
       caddyLog.enable = true;
+      # Reachable directly, with a counter limit low enough to trip in a test.
+      serve.addr = "0.0.0.0:8080";
+      serve.extraArgs = [ "-counter-limit" "3" ];
       guard = {
         enable = true;
         ports = "80";
@@ -36,11 +39,12 @@ in
         logFormat = config.services.dnscount.caddyLog.format;
         extraConfig = ''
           respond /ok "ok" 200
+          respond /auth 401
           respond 404
         '';
       };
     };
-    networking.firewall.allowedTCPPorts = [ 80 ];
+    networking.firewall.allowedTCPPorts = [ 80 8080 ];
     environment.systemPackages = [ pkgs.curl pkgs.jq ];
   };
 
@@ -75,6 +79,21 @@ in
         server.wait_until_succeeds("fail2ban-client status caddy-404 | grep -q '${attacker}'", timeout=60)
         attacker.fail("curl -sS --max-time 5 http://${server}/ok")
         unban("caddy-404")
+
+    with subtest("a burst of 401s gets banned"):
+        for i in range(21):
+            attacker.succeed("curl -sS --max-time 5 -o /dev/null http://${server}/auth")
+        server.wait_until_succeeds("fail2ban-client status caddy-401 | grep -q '${attacker}'", timeout=60)
+        attacker.fail("curl -sS --max-time 5 http://${server}/ok")
+        unban("caddy-401")
+
+    with subtest("tripping a dnscount breaker gets banned"):
+        for i in range(6):
+            attacker.succeed("curl -sS --max-time 5 -o /dev/null http://${server}:8080/counter.txt")
+        server.wait_until_succeeds("journalctl -u dnscount-serve.service | grep -q 'breaker trip: breaker=counter ip=${attacker}'", timeout=30)
+        server.wait_until_succeeds("fail2ban-client status dnscount-trip | grep -q '${attacker}'", timeout=60)
+        attacker.fail("curl -sS --max-time 5 http://${server}/ok")
+        unban("dnscount-trip")
 
     with subtest("exempt networks are never banned"):
         for path in ["/.env", "/.git/config", "/wp-login.php"]:
