@@ -18,6 +18,15 @@ import (
 //
 //	Oct 27 12:00:01 UDM kernel: [WAN_LOCAL-D-2147483647] IN=eth8 OUT= MAC=... SRC=1.2.3.4 DST=5.6.7.8 ... PROTO=TCP SPT=5555 DPT=22 ...
 //
+// Newer UniFi releases send them without the "kernel:" tag, the hostname in
+// its place, and a DESCR:
+//
+//	<13>Nov  6 00:00:01 Router Router [WAN_IN-RET-30005] DESCR="[WAN_IN]Allow Port Forward {Jellyfin" IN=eth3 OUT=br2 ... SRC=... DST=... PROTO=TCP ...
+//
+// A port forward logs each inbound packet twice: [PREROUTING-DNAT-n] to the
+// WAN address, then the forwarded rule to the real destination. Only the
+// second is kept.
+//
 // The bracketed prefix is the rule name; UniFi encodes the action in it
 // (-A- accept, -D- drop, -R- reject). An uptime stamp "[ 1234.567]" before
 // it is ignored.
@@ -33,12 +42,29 @@ var actions = map[string]string{"A": "accept", "D": "drop", "R": "reject", "RET"
 
 func (IPTables) ParseLine(line string, now time.Time) (ingest.Record, error) {
 	h, err := ingest.ParseHeader(line, now)
-	if err != nil || h.Prog != "kernel" {
+	var msg string
+	switch {
+	case err == nil && h.Prog == "kernel":
+		msg = uptimeRE.ReplaceAllString(strings.TrimSpace(h.Msg), "")
+		if !strings.Contains(msg, "SRC=") {
+			return ingest.Record{}, ingest.ErrSkip
+		}
+	case !h.TS.IsZero():
+		// No program tag: the message is everything from the rule on, and
+		// it has to look like a firewall line to count.
+		i := strings.Index(line, " [")
+		if i < 0 {
+			return ingest.Record{}, ingest.ErrSkip
+		}
+		msg = strings.TrimSpace(line[i+1:])
+		if !ruleRE.MatchString(msg) || !strings.Contains(msg, " SRC=") || !strings.Contains(msg, " DST=") || !strings.Contains(msg, " PROTO=") {
+			return ingest.Record{}, ingest.ErrSkip
+		}
+	default:
 		return ingest.Record{}, ingest.ErrSkip
 	}
-	msg := uptimeRE.ReplaceAllString(strings.TrimSpace(h.Msg), "")
-	if !strings.Contains(msg, "SRC=") {
-		return ingest.Record{}, ingest.ErrSkip
+	if m := ruleRE.FindStringSubmatch(msg); m != nil && strings.HasPrefix(m[1], "PREROUTING-DNAT") {
+		return ingest.Record{}, ingest.ErrSkip // the forwarded rule logs the same packet
 	}
 	c := &ingest.Conn{TS: h.TS, Source: "unifi-fw"}
 	if m := ruleRE.FindStringSubmatch(msg); m != nil {
