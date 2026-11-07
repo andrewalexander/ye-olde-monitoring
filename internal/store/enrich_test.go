@@ -513,3 +513,32 @@ func TestIntelJSONDoesNotCollide(t *testing.T) {
 		t.Errorf("inbound row: %s", b)
 	}
 }
+
+// A flagged, busy domain ranks first by default, but "recent" puts the
+// latest lookup first so quiet names aren't cut off by the limit.
+func TestDomainsOrderRecent(t *testing.T) {
+	x := openExplorer(t)
+	q := func(hash, domain string, ts time.Time) ingest.Record {
+		return ingest.Record{Query: &ingest.DNSQuery{Hash: hash, TS: ts, ClientIP: "192.168.1.20", Domain: domain, Source: "test"}}
+	}
+	x.primary.InsertRecords([]ingest.Record{
+		q("a1", "evil.example.org", now.Add(-3*time.Hour)),
+		q("a2", "evil.example.org", now.Add(-2*time.Hour)),
+		q("b1", "quiet.example.com", now.Add(-time.Minute)),
+	})
+	x.index(t)
+	tif, _ := enrich.ParseList(enrich.Feed{Name: "tif", Format: "plain", Kind: "domain", Verdict: enrich.Malicious}, []byte("example.org\n"))
+	if _, err := x.enr.MatchNew(store.Lists{Lists: []*enrich.List{tif}}, now); err != nil {
+		t.Fatal(err)
+	}
+	since := now.AddDate(0, 0, -30)
+
+	doms, err := x.ro.Domains(store.ListQuery{Since: since, Limit: 1})
+	if err != nil || len(doms) != 1 || doms[0].Domain != "evil.example.org" {
+		t.Errorf("default order: %+v %v", doms, err)
+	}
+	doms, err = x.ro.Domains(store.ListQuery{Since: since, Order: store.OrderRecent, Limit: 1})
+	if err != nil || len(doms) != 1 || doms[0].Domain != "quiet.example.com" {
+		t.Errorf("recent order: %+v %v", doms, err)
+	}
+}

@@ -70,17 +70,18 @@ const (
 	OrderFlagged = "flagged" // worst verdict first, then busiest
 	OrderTop     = "top"
 	OrderBottom  = "bottom"
-	OrderNew     = "new" // first seen inside the window, newest first
+	OrderNew     = "new"    // first seen inside the window, newest first
+	OrderRecent  = "recent" // last seen, newest first
 )
 
 func checkOrder(o string) (string, error) {
 	switch o {
 	case "":
 		return OrderFlagged, nil
-	case OrderFlagged, OrderTop, OrderBottom, OrderNew:
+	case OrderFlagged, OrderTop, OrderBottom, OrderNew, OrderRecent:
 		return o, nil
 	}
-	return "", BadQueryError("order must be flagged, top, bottom or new")
+	return "", BadQueryError("order must be flagged, top, bottom, new or recent")
 }
 
 // ListQuery is shared by the explorer's lists.
@@ -227,6 +228,8 @@ func (s *Store) InboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 			return cmp.Or(cmp.Compare(activity(a), activity(b)), strings.Compare(a.IP, b.IP))
 		case OrderNew:
 			return cmp.Or(b.First.Compare(a.First), strings.Compare(a.IP, b.IP))
+		case OrderRecent:
+			return cmp.Or(b.Last.Compare(a.Last), strings.Compare(a.IP, b.IP))
 		default:
 			if c := cmp.Compare(verdictOf(b.Intel), verdictOf(a.Intel)); c != 0 {
 				return c
@@ -423,6 +426,8 @@ func (s *Store) Domains(q ListQuery) ([]DomainRow, error) {
 			return cmp.Or(cmp.Compare(a.Lookups, b.Lookups), strings.Compare(a.Domain, b.Domain))
 		case OrderNew:
 			return cmp.Or(b.First.Compare(a.First), strings.Compare(a.Domain, b.Domain))
+		case OrderRecent:
+			return cmp.Or(b.Last.Compare(a.Last), strings.Compare(a.Domain, b.Domain))
 		default:
 			if c := cmp.Compare(b.rank(), a.rank()); c != 0 {
 				return c

@@ -35,7 +35,7 @@ Shared with the admin API (alerts and bans gain the fields above):
   /api/hits  /api/top  /api/dns  /api/dns/top  /api/alerts  /api/bans
   /api/trips  /api/trips/{id}
 
-/api/ips?[since=7d][&flagged=1][&order=flagged|top|bottom|new][&limit=100]
+/api/ips?[since=7d][&flagged=1][&order=flagged|top|bottom|new|recent][&limit=100]
   Public addresses that hit our sites, were banned, raised IDS alerts or
   tripped a breaker. LAN devices (any address that used the router's DNS)
   never appear.
@@ -48,7 +48,7 @@ Shared with the admin API (alerts and bans gain the fields above):
   names that resolved to it and which LAN clients looked them up, and AS
   changes. The address is re-matched against the current lists first.
 
-/api/domains?[since=7d][&flagged=1][&order=...][&limit=100]
+/api/domains?[since=7d][&flagged=1][&order=flagged|top|bottom|new|recent][&limit=100]
   Domains the LAN looked up.
   [{"domain","lookups","clients","first","last","blocked","new",
     "answers": {"verdict","feeds","ips"}, ...intel}]

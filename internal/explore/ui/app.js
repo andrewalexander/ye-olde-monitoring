@@ -225,7 +225,7 @@ const LIST_VIEWS = {
   domains: {
     title: "Domains",
     lede: "What the LAN looked up. A verdict comes from the domain itself (or a parent) being listed, or from an address it resolved to.",
-    url: "/api/domains", options: ["flagged", "order"],
+    url: "/api/domains", options: ["flagged", "order"], defaultOrder: "recent",
     columns: () => [
       col("Verdict", "verdict", "verdict", { mutator: (v, d) => worst(v, d.answers && d.answers.verdict) }),
       col("Domain", "domain", "domain"), col("Feeds", "feeds", "tags"),
@@ -340,8 +340,8 @@ function optionControls(view, def, q) {
       box.append(el("label", {}, cb, " only flagged"));
     } else if (o === "order") {
       const s = el("select", { onchange: (e) => set("order", e.target.value) },
-        ["flagged", "top", "bottom", "new"].map((v) => el("option", { value: v, text: { flagged: "worst first", top: "busiest first", bottom: "quietest first", new: "new in window" }[v] })));
-      s.value = q.get("order") || "flagged";
+        ["recent", "flagged", "top", "bottom", "new"].map((v) => el("option", { value: v, text: { recent: "latest first", flagged: "worst first", top: "busiest first", bottom: "quietest first", new: "new in window" }[v] })));
+      s.value = q.get("order") || def.defaultOrder || "flagged";
       box.append(el("label", {}, "order ", s));
     } else if (o === "verdict") {
       const s = el("select", { onchange: (e) => set("verdict", e.target.value) },
@@ -371,6 +371,7 @@ async function renderList(view, q) {
   main.append(status);
   const params = { since: state.since, limit };
   for (const o of def.options) if (q.get(o)) params[o] = q.get(o);
+  if (def.defaultOrder && !params.order) params.order = def.defaultOrder;
   const rows = (await api(def.url, params)) || [];
   status.replaceChildren(`${fmtNum(rows.length)} rows (limit ${fmtNum(limit)}). Sort by any column; filter in the headers.`);
   if (rows.length >= limit) {
