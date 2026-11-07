@@ -54,9 +54,25 @@ func New(st *store.Store, errLog io.Writer) *Recorder {
 	return r
 }
 
-// OnTrip and OnEnd plug into guard.Config.
-func (r *Recorder) OnTrip(t guard.Trip) { r.send(job{trip: t}) }
-func (r *Recorder) OnEnd(t guard.Trip)  { r.send(job{end: true, trip: t}) }
+// OnTrip and OnEnd plug into guard.Config. OnTrip also logs TripLine at
+// once, before the trip is stored, so a ban never waits on the database.
+func (r *Recorder) OnTrip(t guard.Trip) {
+	if line, ok := TripLine(t); ok {
+		r.log.Print(line)
+	}
+	r.send(job{trip: t})
+}
+
+// TripLine is the line fail2ban's dnscount-trip jail matches (tripRegex in
+// nix/guard.nix). Only real addresses get one: the Global key "*" trips
+// everyone at once and must never become a ban.
+func TripLine(t guard.Trip) (string, bool) {
+	if _, err := netip.ParseAddr(t.Key); err != nil {
+		return "", false
+	}
+	return fmt.Sprintf("breaker trip: breaker=%s ip=%s reason=%s", t.Breaker, t.Key, t.Reason), true
+}
+func (r *Recorder) OnEnd(t guard.Trip) { r.send(job{end: true, trip: t}) }
 
 func (r *Recorder) send(j job) {
 	r.mu.Lock()

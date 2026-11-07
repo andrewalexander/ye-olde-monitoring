@@ -21,6 +21,10 @@ let
     "(?!/(?i:${concatStringsSep "|" cfg.notFoundIgnore})/)";
   notFoundRegex = ''"client_ip":"<HOST>",.*?"uri":"${notFoundSkip}[^"]*",.*"status":404\b'';
 
+  # dnscount logs this when a breaker trips (forensics.TripLine; a Go test
+  # reads this line, so keep it on one line).
+  tripRegex = ''breaker trip: breaker=(?:${concatStringsSep "|" cfg.tripBreakers}) ip=<HOST> reason='';
+
   caddyJail = { failregex, maxretry, findtime, bantime }: {
     filter.Definition = {
       inherit failregex;
@@ -69,7 +73,8 @@ in
     guard = {
       enable = mkEnableOption ''
         fail2ban jails over Caddy's access log: paths no real client asks for
-        (`caddy-probe`), and bursts of 404s (`caddy-404`). Repeat offenders get
+        (`caddy-probe`), and bursts of 404s (`caddy-404`); and over dnscount's
+        journal: any address that trips a breaker (`dnscount-trip`). Repeat offenders get
         longer bans, across all jails. With an HTTP-proxy VPS in front, the
         firewall here only sees the VPS, so a ban would block everyone: ban on
         the VPS instead'';
@@ -127,6 +132,17 @@ in
         '';
       };
 
+      tripBreakers = mkOption {
+        type = types.listOf types.str;
+        default = [ "counter" "ingest" ];
+        example = [ "counter" "ingest" "syslog" ];
+        description = ''
+          Breakers whose trips ban the address (`dnscount-trip` jail, from
+          dnscount's journal). counter and ingest are what the public reaches;
+          syslog and syslog-not-allowed only ever see the LAN.
+        '';
+      };
+
       extraJails = mkOption {
         type = types.attrsOf types.anything;
         default = { };
@@ -171,6 +187,18 @@ in
           maxretry = 20;
           findtime = "10m";
           bantime = "1h";
+        };
+        # A breaker trip is already a burst well past normal use: ban at once.
+        dnscount-trip = {
+          filter.Definition.failregex = tripRegex;
+          settings = {
+            backend = "systemd";
+            journalmatch = "_SYSTEMD_UNIT=dnscount-serve.service + _SYSTEMD_UNIT=dnscount-syslog.service";
+            port = cfg.ports;
+            maxretry = 1;
+            findtime = "10m";
+            bantime = "1h";
+          };
         };
       } // cfg.extraJails;
     };
