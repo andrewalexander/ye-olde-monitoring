@@ -245,8 +245,8 @@ func (s *Store) DNSByDomain(domain string, since time.Time) ([]ClientLookups, er
 
 // clientLookups groups the dns_queries rows matching where by client.
 func (s *Store) clientLookups(where string, args ...any) ([]ClientLookups, error) {
-	rows, err := s.query(`SELECT client_ip, max(client_name), count(*), min(ts), max(ts) FROM dns_queries
-		WHERE `+where+` GROUP BY client_ip ORDER BY 3 DESC, 1`, args...)
+	rows, err := s.query(`SELECT client_ip, count(*), min(ts), max(ts) FROM dns_queries
+		WHERE `+where+` GROUP BY client_ip ORDER BY 2 DESC, 1`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +255,7 @@ func (s *Store) clientLookups(where string, args ...any) ([]ClientLookups, error
 	for rows.Next() {
 		var c ClientLookups
 		var first, last string
-		if err := rows.Scan(&c.ClientIP, &c.ClientName, &c.Count, &first, &last); err != nil {
+		if err := rows.Scan(&c.ClientIP, &c.Count, &first, &last); err != nil {
 			return nil, err
 		}
 		c.First, c.Last = parseTime(first), parseTime(last)

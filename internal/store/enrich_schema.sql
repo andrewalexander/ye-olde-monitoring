@@ -18,9 +18,7 @@ CREATE INDEX IF NOT EXISTS indicators_checked ON indicators(checked_at);
 -- Addresses that used the router's DNS: LAN devices, even ones with global
 -- IPv6 addresses. They're never treated as public.
 CREATE TABLE IF NOT EXISTS lan_clients (
-	ip         TEXT PRIMARY KEY,
-	first_seen TEXT NOT NULL,
-	last_seen  TEXT NOT NULL
+	ip TEXT PRIMARY KEY
 );
 
 -- How far into each dnscount.db table the index has read (by row id; those
@@ -78,19 +76,15 @@ CREATE INDEX IF NOT EXISTS lookup_requests_ts ON lookup_requests(provider, ts);
 
 -- The version of each list last reconciled.
 CREATE TABLE IF NOT EXISTS feed_versions (
-	provider  TEXT    PRIMARY KEY,
-	version   TEXT    NOT NULL,
-	loaded_at TEXT    NOT NULL,
-	entries   INTEGER NOT NULL
+	provider TEXT PRIMARY KEY,
+	version  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS ip_asn (
 	ip           TEXT    PRIMARY KEY,
 	asn          INTEGER NOT NULL,
 	as_owner     TEXT    NOT NULL DEFAULT '',
-	country      TEXT    NOT NULL DEFAULT '',
-	list_version TEXT    NOT NULL,
-	updated_at   TEXT    NOT NULL
+	country      TEXT    NOT NULL DEFAULT ''
 );
 
 -- An address whose AS or owner changed between iptoasn versions.

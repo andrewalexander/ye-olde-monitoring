@@ -150,10 +150,8 @@ func indexBatch(src, dst *Store, is indexSource, batch int) (int, error) {
 			return 0, err
 		}
 	}
-	for ip, a := range lan {
-		if _, err := tx.Exec(`INSERT INTO lan_clients (ip, first_seen, last_seen) VALUES (?,?,?)
-			ON CONFLICT(ip) DO UPDATE SET first_seen = min(first_seen, excluded.first_seen),
-			last_seen = max(last_seen, excluded.last_seen)`, ip, a.first, a.last); err != nil {
+	for ip := range lan {
+		if _, err := tx.Exec(`INSERT INTO lan_clients (ip) VALUES (?) ON CONFLICT(ip) DO NOTHING`, ip); err != nil {
 			return 0, err
 		}
 	}
@@ -290,9 +288,8 @@ func (s *Store) Reconcile(l *enrich.List, since, now time.Time) (ReconcileStats,
 			}
 		}
 	}
-	if _, err := tx.Exec(`INSERT INTO feed_versions (provider, version, loaded_at, entries) VALUES (?,?,?,?)
-		ON CONFLICT(provider) DO UPDATE SET version = excluded.version, loaded_at = excluded.loaded_at,
-		entries = excluded.entries`, prov, l.Version, ts, l.Entries); err != nil {
+	if _, err := tx.Exec(`INSERT INTO feed_versions (provider, version) VALUES (?,?)
+		ON CONFLICT(provider) DO UPDATE SET version = excluded.version`, prov, l.Version); err != nil {
 		return st, err
 	}
 	return st, tx.Commit()
@@ -329,9 +326,8 @@ func (s *Store) ReconcileASN(t *enrich.ASNTable, since, now time.Time) (changed 
 			changed++
 		}
 	}
-	if _, err := tx.Exec(`INSERT INTO feed_versions (provider, version, loaded_at, entries) VALUES ('asn:iptoasn',?,?,?)
-		ON CONFLICT(provider) DO UPDATE SET version = excluded.version, loaded_at = excluded.loaded_at,
-		entries = excluded.entries`, t.Version, fmtTime(now), t.Entries); err != nil {
+	if _, err := tx.Exec(`INSERT INTO feed_versions (provider, version) VALUES ('asn:iptoasn',?)
+		ON CONFLICT(provider) DO UPDATE SET version = excluded.version`, t.Version); err != nil {
 		return changed, err
 	}
 	return changed, tx.Commit()
@@ -353,10 +349,9 @@ func setASN(tx *sql.Tx, t *enrich.ASNTable, ip string, now time.Time) (changed b
 			return false, err
 		}
 	}
-	_, err = tx.Exec(`INSERT INTO ip_asn (ip, asn, as_owner, country, list_version, updated_at) VALUES (?,?,?,?,?,?)
-		ON CONFLICT(ip) DO UPDATE SET asn = excluded.asn, as_owner = excluded.as_owner, country = excluded.country,
-		list_version = excluded.list_version, updated_at = excluded.updated_at`,
-		ip, a.Number, a.Owner, a.Country, t.Version, fmtTime(now))
+	_, err = tx.Exec(`INSERT INTO ip_asn (ip, asn, as_owner, country) VALUES (?,?,?,?)
+		ON CONFLICT(ip) DO UPDATE SET asn = excluded.asn, as_owner = excluded.as_owner, country = excluded.country`,
+		ip, a.Number, a.Owner, a.Country)
 	return changed, err
 }
 
@@ -637,7 +632,6 @@ func (s *Store) Intel(inds []string, history bool) (map[string]*Intel, error) {
 // re-reads every table from the start. Re-reading is safe: indicators only
 // widen their first/last seen and gain roles.
 //
-//	1: first version
 //	2: special-use names (ipv4only.arpa) are indexed too
 //	3: a connection's destination is RoleConn only when a LAN device was
 //	   the source; the old bits are cleared and connections alone re-read
@@ -657,11 +651,7 @@ func (s *Store) resetIndexIfOld() error {
 		return err
 	}
 	defer tx.Rollback()
-	if v < 2 {
-		if _, err := tx.Exec(`DELETE FROM cursors`); err != nil {
-			return err
-		}
-	}
+	// Every database made before v3 is at v2, so only v3's step remains.
 	// v3: clear RoleConn (and drop indicators it was the only reason for),
 	// then re-read connections under the new rule.
 	for _, q := range []string{

@@ -471,7 +471,7 @@ func (s *Store) Clients(since time.Time) ([]ClientRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.query(`SELECT client_ip, domain, count(*), max(client_name), min(ts), max(ts)
+	rows, err := s.query(`SELECT client_ip, domain, count(*), min(ts), max(ts)
 		FROM dns_queries WHERE ts >= ? GROUP BY client_ip, domain`, fmtTime(since))
 	if err != nil {
 		return nil, err
@@ -486,18 +486,14 @@ func (s *Store) Clients(since time.Time) ([]ClientRow, error) {
 	flagged := map[string][]flaggedDomain{}
 	for rows.Next() {
 		var ip, d, first, last string
-		var name sql.NullString
 		var n int64
-		if err := rows.Scan(&ip, &d, &n, &name, &first, &last); err != nil {
+		if err := rows.Scan(&ip, &d, &n, &first, &last); err != nil {
 			return nil, err
 		}
 		c := m[ip]
 		if c == nil {
 			c = &ClientRow{IP: ip, First: parseTime(first), Last: parseTime(last)}
 			m[ip] = c
-		}
-		if name.String != "" {
-			c.Name = name.String
 		}
 		c.Lookups += n
 		c.Domains++

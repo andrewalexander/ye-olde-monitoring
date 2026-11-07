@@ -33,7 +33,6 @@ CREATE TABLE IF NOT EXISTS dns_queries (
 	id          INTEGER PRIMARY KEY,
 	ts          TEXT NOT NULL,
 	client_ip   TEXT NOT NULL,
-	client_name TEXT NOT NULL DEFAULT '',
 	domain      TEXT NOT NULL,
 	qtype       TEXT NOT NULL DEFAULT '',
 	source      TEXT NOT NULL,
@@ -54,8 +53,7 @@ CREATE TABLE IF NOT EXISTS dns_replies (
 	line_hash TEXT NOT NULL UNIQUE
 );
 -- Lookups are "this name (or address) since T": with ts in the index they
--- read only the window, not the key's whole history. They replace the
--- single-column indexes, which migrate drops.
+-- read only the window, not the key's whole history.
 CREATE INDEX IF NOT EXISTS dns_replies_domain_ts ON dns_replies(domain, ts);
 CREATE INDEX IF NOT EXISTS dns_replies_answer_ts ON dns_replies(answer, ts);
 
@@ -113,7 +111,6 @@ CREATE TABLE IF NOT EXISTS ids_alerts (
 	source       TEXT    NOT NULL,
 	-- From UniFi's CEF events: the router's direction, the LAN device at
 	-- either end (CEF often has no address for it) and the policy that fired.
-	-- Added after the table shipped: see store.migrate.
 	direction    TEXT    NOT NULL DEFAULT '',
 	src_name     TEXT    NOT NULL DEFAULT '',
 	src_mac      TEXT    NOT NULL DEFAULT '',

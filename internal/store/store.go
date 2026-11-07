@@ -104,7 +104,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
-	if err := migrate(db); err != nil {
+	if err := dropColumns(db, droppedColumns); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
@@ -194,8 +194,8 @@ func (s *Store) InsertRecords(recs []ingest.Record) (int, error) {
 			}
 		}
 		if q := r.Query; q != nil {
-			if err := exec(`INSERT OR IGNORE INTO dns_queries (ts, client_ip, client_name, domain, qtype, source, line_hash)
-				VALUES (?,?,?,?,?,?,?)`, fmtTime(q.TS), q.ClientIP, q.ClientName, q.Domain, q.QType, q.Source, q.Hash); err != nil {
+			if err := exec(`INSERT OR IGNORE INTO dns_queries (ts, client_ip, domain, qtype, source, line_hash)
+				VALUES (?,?,?,?,?,?)`, fmtTime(q.TS), q.ClientIP, q.Domain, q.QType, q.Source, q.Hash); err != nil {
 				return 0, err
 			}
 		}

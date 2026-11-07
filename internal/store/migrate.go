@@ -21,41 +21,35 @@ const insertAlert = `INSERT INTO ids_alerts (ts, src_ip, src_port, dst_ip, dst_p
 	  AND (excluded.direction, excluded.src_name, excluded.src_mac,
 	       excluded.dst_name, excluded.dst_mac, excluded.policy) != ('','','','','','')`
 
-// addedColumns are columns added to tables after they first shipped.
-// CREATE TABLE IF NOT EXISTS doesn't touch an existing table, so migrate adds
-// them. Keep each one's declaration identical to schema.sql.
-var addedColumns = []struct{ table, column, decl string }{
-	{"ids_alerts", "direction", "TEXT NOT NULL DEFAULT ''"},
-	{"ids_alerts", "src_name", "TEXT NOT NULL DEFAULT ''"},
-	{"ids_alerts", "src_mac", "TEXT NOT NULL DEFAULT ''"},
-	{"ids_alerts", "dst_name", "TEXT NOT NULL DEFAULT ''"},
-	{"ids_alerts", "dst_mac", "TEXT NOT NULL DEFAULT ''"},
-	{"ids_alerts", "policy", "TEXT NOT NULL DEFAULT ''"},
+// droppedColumns were never read. CREATE TABLE IF NOT EXISTS leaves an
+// existing table alone, so dropColumns removes them from databases made
+// before they went. Dropping a column rewrites its table once.
+var droppedColumns = []struct{ table, column string }{
+	{"dns_queries", "client_name"},
 }
 
-// droppedIndexes were replaced by wider ones in schema.sql (which runs
-// first, so a lookup is never without an index).
-var droppedIndexes = []string{"dns_replies_domain", "dns_replies_answer"}
+// enrichDroppedColumns are the same for the explorer's database.
+var enrichDroppedColumns = []struct{ table, column string }{
+	{"lan_clients", "first_seen"}, {"lan_clients", "last_seen"},
+	{"feed_versions", "loaded_at"}, {"feed_versions", "entries"},
+	{"ip_asn", "list_version"}, {"ip_asn", "updated_at"},
+}
 
-// migrate adds any missing columns and drops replaced indexes. Several dnscount processes open the
-// database at boot, so another may add a column first: that's fine.
-func migrate(db *sql.DB) error {
-	for _, ix := range droppedIndexes {
-		if _, err := db.Exec(`DROP INDEX IF EXISTS ` + ix); err != nil {
-			return fmt.Errorf("drop index %s: %w", ix, err)
-		}
-	}
-	for _, c := range addedColumns {
+// dropColumns drops each column that's still there. Several dnscount
+// processes open the database at boot, so another may drop one first:
+// that's fine.
+func dropColumns(db *sql.DB, cols []struct{ table, column string }) error {
+	for _, c := range cols {
 		have, err := hasColumn(db, c.table, c.column)
 		if err != nil {
 			return err
 		}
-		if have {
+		if !have {
 			continue
 		}
-		_, err = db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.column + ` ` + c.decl)
-		if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-			return fmt.Errorf("add %s.%s: %w", c.table, c.column, err)
+		_, err = db.Exec(`ALTER TABLE ` + c.table + ` DROP COLUMN ` + c.column)
+		if err != nil && !strings.Contains(err.Error(), "no such column") {
+			return fmt.Errorf("drop %s.%s: %w", c.table, c.column, err)
 		}
 	}
 	return nil

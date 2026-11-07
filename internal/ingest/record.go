@@ -17,13 +17,12 @@ import (
 
 // DNSQuery is one lookup: client asked for domain.
 type DNSQuery struct {
-	Hash       string
-	TS         time.Time
-	ClientIP   string
-	ClientName string
-	Domain     string
-	QType      string
-	Source     string
+	Hash     string
+	TS       time.Time
+	ClientIP string
+	Domain   string
+	QType    string
+	Source   string
 }
 
 // DNSReply is one answer/forward/block for a domain.
