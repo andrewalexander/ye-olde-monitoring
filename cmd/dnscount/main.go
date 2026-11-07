@@ -5,6 +5,7 @@
 //	dnscount ingest-access  import nginx/apache/caddy access logs
 //	dnscount ingest-dns     import dnsmasq/UniFi/Pi-hole or AdGuard logs
 //	dnscount ingest-bans    import fail2ban's log (bans and unbans)
+//	dnscount ingest-auth    import an app's refused logins (Jellyfin's log)
 //	dnscount report         hits | dns | alerts | bans | flagged | trips | trip <id>
 //	dnscount check          data sanity checks
 //	dnscount backup         timestamped copy of the database
@@ -35,6 +36,7 @@ import (
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/f2b"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/fw"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/ids"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/jellyfin"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/lan"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/syslog"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/server"
@@ -49,6 +51,7 @@ commands:
   ingest-access  import nginx/apache "combined" or caddy JSON access logs
   ingest-dns     import dnsmasq (UniFi, Pi-hole), unifi (dnsmasq+firewall+IDS+LAN devices) or adguard logs
   ingest-bans    import fail2ban's log (journalctl -u fail2ban) to check bans held
+  ingest-auth    import refused logins from an app's log (journalctl -u jellyfin)
   report         hits | dns | alerts | bans | flagged | trips | trip <id>
   check          run data sanity checks
   backup         write a timestamped copy of the database to a directory
@@ -67,7 +70,7 @@ func main() {
 	}
 	cmds := map[string]func([]string) error{
 		"serve": serve, "syslog": syslogCmd, "ingest-access": ingestAccess,
-		"ingest-dns": ingestDNS, "ingest-bans": ingestBans, "report": report, "check": check, "backup": backup,
+		"ingest-dns": ingestDNS, "ingest-bans": ingestBans, "ingest-auth": ingestAuth, "report": report, "check": check, "backup": backup,
 		"explore": exploreCmd, "enrich": enrichCmd, "feeds": feedsCmd,
 	}
 	f, ok := cmds[os.Args[1]]
@@ -265,6 +268,18 @@ func ingestBans(args []string) error {
 		return fmt.Errorf("-jail-ports: %w", err)
 	}
 	return runIngest(*db, &f2b.Fail2ban{Ports: m}, fs.Args(), *follow, nil)
+}
+
+func ingestAuth(args []string) error {
+	fs := flag.NewFlagSet("ingest-auth", flag.ExitOnError)
+	db := dbFlag(fs)
+	format := fs.String("format", "jellyfin", "the app whose log this is: jellyfin")
+	follow := fs.Bool("follow", false, "keep reading as the input grows (use with journalctl -f)")
+	fs.Parse(args)
+	if *format != "jellyfin" {
+		return fmt.Errorf("-format must be jellyfin")
+	}
+	return runIngest(*db, jellyfin.Jellyfin{}, fs.Args(), *follow, nil)
 }
 
 // runIngest feeds each file ("-" is stdin) through p into the store in

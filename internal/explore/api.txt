@@ -36,15 +36,18 @@ Shared with the admin API (alerts and bans gain the fields above):
   /api/trips  /api/trips/{id}
 
 /api/ips?[since=7d][&flagged=1][&order=flagged|top|bottom|new|recent][&limit=100]
-  Public addresses that hit our sites, were banned, raised IDS alerts or
-  tripped a breaker. LAN devices (any address that used the router's DNS)
+  Public addresses that hit our sites, were banned, raised IDS alerts,
+  tripped a breaker or had a login refused. LAN devices (any address that
+  used the router's DNS)
   never appear.
   [{"ip","hits","errors_4xx","first","last","sites","bans","leaks",
-    "alerts_allowed","alerts_blocked","trips", ...intel}]
+    "alerts_allowed","alerts_blocked","trips","auth_failures", ...intel}]
+  auth_failures: logins an app refused (Jellyfin's log).
 
 /api/ip/{ip}?[since=30d]
   One address: intel with every list row ("matches", including lists it
-  dropped off), all-time counts, recent hits, bans, alerts and trips, the
+  dropped off), all-time counts, recent hits, bans, alerts, trips and
+  refused logins ("auth_failures": [{"ts","source","ip","user"}]), the
   names that resolved to it and which LAN clients looked them up, and AS
   changes. The address is re-matched against the current lists first.
 

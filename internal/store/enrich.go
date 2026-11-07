@@ -23,8 +23,9 @@ const (
 	RoleConn                 // destination of a logged connection
 	RoleAlertDst             // destination of an IDS alert
 	RoleConnSrc              // source of a logged connection from outside (port forwards, WAN drops)
+	RoleAuthFail             // an app refused its login (new roles go last: the bits are stored)
 
-	RolesIn  = RoleHit | RoleBan | RoleAlertSrc | RoleTrip | RoleConnSrc
+	RolesIn  = RoleHit | RoleBan | RoleAlertSrc | RoleTrip | RoleConnSrc | RoleAuthFail
 	RolesOut = RoleLookup | RoleAnswer | RoleConn | RoleAlertDst
 
 	roleLAN = -1 // a dns_queries client: a LAN device
@@ -40,6 +41,7 @@ var indexSources = []indexSource{
 	{"bans", "ts, ip", []int{RoleBan}},
 	{"ids_alerts", "ts, src_ip, dst_ip", []int{RoleAlertSrc, RoleAlertDst}},
 	{"breaker_trips", "tripped_at, key", []int{RoleTrip}},
+	{"auth_failures", "ts, ip", []int{RoleAuthFail}},
 	{"dns_queries", "ts, client_ip, domain", []int{roleLAN, RoleLookup}},
 	{"dns_replies", "ts, answer", []int{RoleAnswer}},
 	{"connections", "ts, client_ip, dst_ip", []int{RoleConnSrc, RoleConn}},

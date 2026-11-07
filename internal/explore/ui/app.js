@@ -219,7 +219,7 @@ const LIST_VIEWS = {
       col("Owner", "as_owner"), col("CC", "country"),
       col("Hits", "hits", "num"), col("4xx", "errors_4xx", "num"), col("Bans", "bans", "num"), bans30(), abuseCol(), portsCol(),
       col("Leaks", "leaks", "leak"), col("Alerts", "alerts_allowed", "num"), col("Blocked", "alerts_blocked", "num"),
-      col("Trips", "trips", "num"), col("Sites", "sites", "list"), col("First", "first", "time"), col("Last", "last", "time"),
+      col("Trips", "trips", "num"), col("Refused logins", "auth_failures", "num"), col("Sites", "sites", "list"), col("First", "first", "time"), col("Last", "last", "time"),
     ],
   },
   domains: {
@@ -517,6 +517,8 @@ async function renderIP(ip) {
   table(main, p.alerts, LIST_VIEWS.alerts.columns().filter(perIP));
   main.append(el("h2", { text: "Breaker trips" }));
   table(main, p.trips, LIST_VIEWS.trips.columns().filter(perIP));
+  main.append(el("h2", { text: "Refused logins" }));
+  table(main, p.auth_failures, [col("When", "ts", "time"), col("App", "source"), col("Name tried", "user")]);
   if ((p.sightings || []).length) sightingsTable(main, p.sightings);
   if ((p.asn_changes || []).length) {
     main.append(el("h2", { text: "AS changes" }));

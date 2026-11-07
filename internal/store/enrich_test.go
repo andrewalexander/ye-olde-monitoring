@@ -542,3 +542,31 @@ func TestDomainsOrderRecent(t *testing.T) {
 		t.Errorf("recent order: %+v %v", doms, err)
 	}
 }
+
+// A refused login makes its address an inbound IP, with the name tried on
+// its profile, and indexes it with its own role.
+func TestAuthFailuresInbound(t *testing.T) {
+	x := openExplorer(t)
+	x.primary.InsertRecords([]ingest.Record{
+		{Auth: &ingest.AuthFailure{Hash: "a1", TS: now.Add(-time.Hour), Source: "jellyfin", IP: "203.0.113.44", User: "admin"}},
+		{Auth: &ingest.AuthFailure{Hash: "a2", TS: now, Source: "jellyfin", IP: "203.0.113.44", User: "root"}},
+		{Auth: &ingest.AuthFailure{Hash: "a2", TS: now, Source: "jellyfin", IP: "203.0.113.44", User: "root"}}, // same line again
+	})
+	x.index(t)
+	since := now.AddDate(0, 0, -30)
+	in, err := x.ro.InboundIPs(store.ListQuery{Since: since}, now)
+	if err != nil || len(in) != 1 || in[0].IP != "203.0.113.44" || in[0].AuthFailures != 2 {
+		t.Fatalf("inbound: %+v %v", in, err)
+	}
+	p, err := x.ro.IPProfile("203.0.113.44", since, now)
+	if err != nil || len(p.AuthFailures) != 2 || p.AuthFailures[0].User != "root" {
+		t.Errorf("profile: %+v %v", p.AuthFailures, err)
+	}
+	var roles int
+	if err := x.enr.DB().QueryRow(`SELECT roles FROM indicators WHERE indicator = '203.0.113.44'`).Scan(&roles); err != nil {
+		t.Fatal(err)
+	}
+	if roles&store.RoleAuthFail == 0 {
+		t.Errorf("roles = %b, want RoleAuthFail", roles)
+	}
+}

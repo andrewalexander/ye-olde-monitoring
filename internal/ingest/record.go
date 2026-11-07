@@ -104,6 +104,15 @@ type Ban struct {
 	Failures int
 }
 
+// AuthFailure is an app refusing a login, from the app's own log.
+type AuthFailure struct {
+	Hash   string
+	TS     time.Time
+	Source string // the app: jellyfin
+	IP     string
+	User   string // the name tried; user data, kept on the LAN
+}
+
 // Record is whatever one log line produced; any field may be nil.
 type Record struct {
 	Hit   *hit.Hit
@@ -113,6 +122,7 @@ type Record struct {
 	Alert *IDSAlert
 	Ban   *Ban
 	Seen  *Sighting
+	Auth  *AuthFailure
 }
 
 // ErrSkip means the line is fine but isn't something this parser records
@@ -233,6 +243,9 @@ func (r *Record) SetHash(h string) {
 	}
 	if r.Seen != nil {
 		r.Seen.Hash = h
+	}
+	if r.Auth != nil {
+		r.Auth.Hash = h
 	}
 }
 

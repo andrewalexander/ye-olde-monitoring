@@ -177,6 +177,16 @@ in
       };
     };
 
+    jellyfinAuth.enable = mkOption {
+      type = types.bool;
+      default = config.services.jellyfin.enable;
+      defaultText = lib.literalExpression "config.services.jellyfin.enable";
+      description = ''
+        Record the logins Jellyfin refuses (address and the name tried), read
+        from its journal, for the explorer. Jellyfin is left alone.
+      '';
+    };
+
     explore = {
       enable = mkEnableOption ''
         the explorer: a separate, low-priority process serving the LAN table UI
@@ -383,6 +393,26 @@ in
           ${config.systemd.package}/bin/journalctl --unit=fail2ban.service --output=short-iso \
             --no-pager --follow --lines=all \
             | ${bin} ingest-bans -follow -jail-ports ${lib.escapeShellArg jailPorts} -
+        '';
+        SupplementaryGroups = [ "systemd-journal" ];
+        Restart = "always";
+        RestartSec = 5;
+      };
+    };
+
+    systemd.services.dnscount-jellyfin-auth = mkIf cfg.jellyfinAuth.enable {
+      description = "dnscount: record the logins Jellyfin refuses, from its journal";
+      after = [ "dnscount-serve.service" "jellyfin.service" ];
+      wantedBy = [ "multi-user.target" ];
+      environment.DNSCOUNT_DB = db;
+      # Like dnscount-fail2ban: the whole journal is read on every start and
+      # already-recorded lines are skipped, so the first start backfills.
+      serviceConfig = hardening // noNetwork // {
+        ExecStart = pkgs.writeShellScript "dnscount-jellyfin-auth" ''
+          set -o pipefail
+          ${config.systemd.package}/bin/journalctl --unit=jellyfin.service --output=short-iso \
+            --no-pager --follow --lines=all \
+            | ${bin} ingest-auth -format jellyfin -follow -
         '';
         SupplementaryGroups = [ "systemd-journal" ];
         Restart = "always";

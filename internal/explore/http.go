@@ -280,7 +280,7 @@ func (x *Explorer) overview(st *store.Store) (map[string]any, error) {
 	day := store.FormatTime(x.cfg.Now().Add(-24 * time.Hour))
 	for _, t := range []struct{ table, ts string }{
 		{"hits", "ts"}, {"dns_queries", "ts"}, {"dns_replies", ""}, {"connections", ""},
-		{"ids_alerts", "ts"}, {"bans", "ts"}, {"breaker_trips", "tripped_at"},
+		{"ids_alerts", "ts"}, {"bans", "ts"}, {"breaker_trips", "tripped_at"}, {"auth_failures", "ts"},
 	} {
 		c := map[string]int64{}
 		var rows int64

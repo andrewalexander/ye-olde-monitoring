@@ -139,6 +139,19 @@ CREATE TABLE IF NOT EXISTS bans (
 CREATE INDEX IF NOT EXISTS bans_ip ON bans(ip, jail, ts);
 CREATE INDEX IF NOT EXISTS bans_ts ON bans(ts);
 
+-- Logins an app refused, from the app's own log (Jellyfin's "Authentication
+-- request for <user> has been denied (IP: ...)"). user is the name tried.
+CREATE TABLE IF NOT EXISTS auth_failures (
+	id        INTEGER PRIMARY KEY,
+	ts        TEXT    NOT NULL,
+	source    TEXT    NOT NULL,
+	ip        TEXT    NOT NULL,
+	user      TEXT    NOT NULL DEFAULT '',
+	line_hash TEXT    NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS auth_failures_ip ON auth_failures(ip, ts);
+CREATE INDEX IF NOT EXISTS auth_failures_ts ON auth_failures(ts);
+
 -- LAN devices seen at an address: DHCP leases, UniFi client events and the
 -- router's neighbour table. A device's name at a time is its latest
 -- sighting at or before then; IPv6 addresses get theirs through the MAC.

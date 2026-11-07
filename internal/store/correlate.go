@@ -62,6 +62,7 @@ type InboundIP struct {
 	AlertsAllowed int64     `json:"alerts_allowed"`
 	AlertsBlocked int64     `json:"alerts_blocked"`
 	Trips         int64     `json:"trips"`
+	AuthFailures  int64     `json:"auth_failures"`
 	*Intel
 }
 
@@ -156,6 +157,8 @@ func (s *Store) InboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 			func(r *InboundIP, a, b int64) { r.AlertsAllowed, r.AlertsBlocked = a, b }},
 		{`SELECT key, count(*), 0 FROM breaker_trips WHERE tripped_at >= ? GROUP BY key`,
 			func(r *InboundIP, a, _ int64) { r.Trips = a }},
+		{`SELECT ip, count(*), 0 FROM auth_failures WHERE ts >= ? GROUP BY ip`,
+			func(r *InboundIP, a, _ int64) { r.AuthFailures = a }},
 	}
 	for _, c := range counts {
 		rows, err := s.query(c.q, since)
@@ -220,7 +223,9 @@ func (s *Store) InboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 		keep = append(keep, r)
 	}
 	out = keep
-	activity := func(r InboundIP) int64 { return r.Hits + r.Bans + r.AlertsAllowed + r.AlertsBlocked + r.Trips }
+	activity := func(r InboundIP) int64 {
+		return r.Hits + r.Bans + r.AlertsAllowed + r.AlertsBlocked + r.Trips + r.AuthFailures
+	}
 	slices.SortFunc(out, func(a, b InboundIP) int {
 		switch q.Order {
 		case OrderTop:
@@ -788,16 +793,18 @@ type ASNChange struct {
 
 // IPProfile is everything about one address.
 type IPProfile struct {
-	IP         string         `json:"ip"`
-	LAN        bool           `json:"lan"`
-	Intel      *Intel         `json:"intel,omitempty"`
-	History    IPHistory      `json:"history"`
-	Hits       []hit.Hit      `json:"hits"`
-	Bans       []Ban          `json:"bans"`
-	Alerts     []Alert        `json:"alerts"`
-	Trips      []Trip         `json:"trips"`
-	ResolvedBy []ResolvedFrom `json:"resolved_from"`
-	ASNChanges []ASNChange    `json:"asn_changes,omitempty"`
+	IP      string    `json:"ip"`
+	LAN     bool      `json:"lan"`
+	Intel   *Intel    `json:"intel,omitempty"`
+	History IPHistory `json:"history"`
+	Hits    []hit.Hit `json:"hits"`
+	Bans    []Ban     `json:"bans"`
+	Alerts  []Alert   `json:"alerts"`
+	Trips   []Trip    `json:"trips"`
+	// Logins an app refused from this address, with the name tried.
+	AuthFailures []AuthFailure  `json:"auth_failures"`
+	ResolvedBy   []ResolvedFrom `json:"resolved_from"`
+	ASNChanges   []ASNChange    `json:"asn_changes,omitempty"`
 	// For LAN addresses: the device there now, and its sightings (DHCP,
 	// UniFi, neighbour table), across every address it has used.
 	Device    *Device    `json:"device,omitempty"`
@@ -842,6 +849,9 @@ func (s *Store) IPProfile(ip string, since, now time.Time) (IPProfile, error) {
 		return p, err
 	}
 	if p.Trips, err = s.Trips(TripFilter{Key: ip, Since: since, Limit: 50}); err != nil {
+		return p, err
+	}
+	if p.AuthFailures, err = s.AuthFailures(ip, since, 50); err != nil {
 		return p, err
 	}
 	sinceS := fmtTime(since)

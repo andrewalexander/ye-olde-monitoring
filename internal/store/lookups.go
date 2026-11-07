@@ -68,7 +68,7 @@ func (s *Store) LookupCandidates(since, now time.Time) ([]Candidate, error) {
 	}
 	for _, r := range in {
 		alerts := r.AlertsAllowed + r.AlertsBlocked
-		if !r.Intel.Flagged() && r.Bans == 0 && alerts == 0 && r.Trips == 0 {
+		if !r.Intel.Flagged() && r.Bans == 0 && alerts == 0 && r.Trips == 0 && r.AuthFailures == 0 {
 			continue
 		}
 		c := Candidate{Indicator: r.IP, Kind: "ip", verdict: verdictOf(r.Intel), alerts: alerts, hits: r.Hits}
@@ -87,6 +87,9 @@ func (s *Store) LookupCandidates(since, now time.Time) ([]Candidate, error) {
 		}
 		if r.Trips > 0 {
 			why = append(why, fmt.Sprintf("%d breaker trip(s)", r.Trips))
+		}
+		if r.AuthFailures > 0 {
+			why = append(why, fmt.Sprintf("%d refused login(s)", r.AuthFailures))
 		}
 		if r.Hits > 0 {
 			why = append(why, fmt.Sprintf("%d hits", r.Hits))

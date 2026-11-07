@@ -194,6 +194,12 @@ func (s *Store) InsertRecords(recs []ingest.Record) (int, error) {
 				return 0, err
 			}
 		}
+		if a := r.Auth; a != nil {
+			if err := exec(`INSERT OR IGNORE INTO auth_failures (ts, source, ip, user, line_hash) VALUES (?,?,?,?,?)`,
+				fmtTime(a.TS), a.Source, a.IP, a.User, a.Hash); err != nil {
+				return 0, err
+			}
+		}
 		if b := r.Ban; b != nil {
 			q, args := insertBan, banArgs(b)
 			if b.Event == "increase" {
