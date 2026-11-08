@@ -19,7 +19,7 @@ It also has a NixOS module for it: `services.dnscount`; and so does the companio
 
 There's also an old-school visitor counter too, because that's what we set out to build initially 😅
 
-<screenshot>
+<img width="1350" height="619" alt="image" src="https://github.com/user-attachments/assets/61434c13-7b48-4f13-ae79-6713dea69627" />
 
 ## Install
 
@@ -212,7 +212,7 @@ If you `GET /api`, there is a plain-text reference for every endpoint (from `int
 
 ### The explorer
 
-<screenshot>
+<img width="1229" height="593" alt="image" src="https://github.com/user-attachments/assets/0d7fbbb7-e949-470d-af71-798de1b98a04" />
 
 `dnscount explore` (`services.dnscount.explore`) is a separate process that reads the live database read-only and serves a UI on localhost. Put it behind a LAN-only proxy. It has no password.
 
@@ -231,7 +231,7 @@ Its API is documented in `internal/explore/api.txt`.
 
 ### Threat feeds
 
-<screenshot>
+<img width="1466" height="358" alt="image" src="https://github.com/user-attachments/assets/1d849087-cbd6-41f1-87c1-e0e669778df6" />
 
 These are free, and need no account. `dnscount-feeds` downloads them hourly, each one only when it's due, and matches them on the box. Nothing about your traffic leaves the box.
 
@@ -255,7 +255,7 @@ When a list changes, every indicator seen in the last 90 days is re-checked agai
 
 ### Outside lookups
 
-<screenshot>
+<img width="1611" height="853" alt="Screenshot 2026-11-07 at 6 53 34 PM" src="https://github.com/user-attachments/assets/02682117-aea3-4210-8b92-dccdf0a7b0be" />
 
 These services are asked about one address at a time, and their answers are cached. The answers are context shown next to the verdict; they never flag anything themselves.
 
