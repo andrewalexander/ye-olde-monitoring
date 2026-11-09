@@ -230,7 +230,7 @@ If you `GET /api`, there is a plain-text reference for every endpoint (from `int
 |---|---|
 | **Overview** | Health at a glance, indicators indexed, how many are flagged |
 | **Flagged** | Every listed IP or domain seen: **in** (it reached us), **out** (the LAN reached it) or **both**, with the LAN devices involved |
-| **Inbound IPs** | Everyone who hit us, got banned, raised an alert, tripped a breaker or had a login refused, with AS, country and lists; worst first |
+| **Inbound IPs** | Everyone who hit us, got banned, raised an alert, tripped a breaker or had a login refused (and, on request, everyone the firewall only dropped): hits, one Defenses tally (window and 30 days), first/last seen across every kind of event, AS, country and lists; worst first |
 | **Domains** | What the LAN looked up: listed names, names that resolved to listed addresses, new names |
 | **LAN clients** | Each device and how many flagged names it looked up |
 | **Hits, Bans, Alerts, Trips** | The raw records, newest first, each with what's known about its address; a trip opens everything recorded when it tripped |

@@ -70,6 +70,11 @@ CREATE TABLE IF NOT EXISTS connections (
 );
 CREATE INDEX IF NOT EXISTS connections_client_ip ON connections(client_ip);
 CREATE INDEX IF NOT EXISTS connections_dst_ip ON connections(dst_ip);
+-- Inbound IPs reads firewall drops over a window, per source address.
+-- Partial: drops only. 1-2 MB a day at 10k-50k drops a day, and no
+-- measurable cost on ingest. Adding action would make it covering, but that
+-- measured 8% bigger for a few ms: the GROUP BY is the cost, not the rows.
+CREATE INDEX IF NOT EXISTS connections_dropped ON connections(ts, client_ip) WHERE action IN ('drop', 'reject');
 
 -- One row per circuit-breaker trip, with everything we knew about the
 -- offender at that moment in detail_json.

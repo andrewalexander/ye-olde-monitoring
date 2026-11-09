@@ -3,6 +3,7 @@ package store
 import (
 	"cmp"
 	"database/sql"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -32,21 +33,48 @@ func (s *Store) IsLAN(ip string) (bool, error) {
 	return n > 0, err
 }
 
-// InboundIP is one public address that reached us, with everything it did.
+// InboundIP is one public address that reached us, and what we did about it.
 type InboundIP struct {
-	IP            string    `json:"ip"`
-	Hits          int64     `json:"hits"`
-	Errors4xx     int64     `json:"errors_4xx"`
-	First         time.Time `json:"first,omitzero"`
-	Last          time.Time `json:"last,omitzero"`
-	Sites         []string  `json:"sites,omitempty"`
-	Bans          int64     `json:"bans"`
-	Leaks         int64     `json:"leaks"`
-	AlertsAllowed int64     `json:"alerts_allowed"`
-	AlertsBlocked int64     `json:"alerts_blocked"`
-	Trips         int64     `json:"trips"`
-	AuthFailures  int64     `json:"auth_failures"`
+	IP        string `json:"ip"`
+	Hits      int64  `json:"hits"`
+	Errors4xx int64  `json:"errors_4xx"`
+	// Defenses is what was done about it in the window; Defenses30d is the
+	// same kinds summed over the 30 days to now, whatever the window.
+	Defenses    Defenses `json:"defenses"`
+	Defenses30d int64    `json:"defenses_30d"`
+	// First and Last are its earliest and latest event of any kind: a hit,
+	// an IDS alert, a ban, a breaker trip or a refused login.
+	First time.Time `json:"first,omitzero"`
+	Last  time.Time `json:"last,omitzero"`
+	Sites []string  `json:"sites,omitempty"` // from web hits only
 	*Intel
+}
+
+// Defenses is what was done about an address, by kind. The IP profile has
+// the events themselves.
+type Defenses struct {
+	Total  int64 `json:"total"`  // the kinds below, not the warnings
+	IDS    int64 `json:"ids"`    // IDS/IPS blocked it
+	Bans   int64 `json:"bans"`   // fail2ban, not counting restores across restarts
+	Trips  int64 `json:"trips"`  // a circuit breaker tripped on it
+	Logins int64 `json:"logins"` // an app refused its login
+	// Firewall counts the router's firewall dropping or rejecting it.
+	Firewall int64 `json:"firewall"`
+	// Warnings: a defense that didn't hold, or a detection nothing acted on.
+	Leaks         int64 `json:"leaks,omitempty"`          // bans that hits got through
+	AlertsAllowed int64 `json:"alerts_allowed,omitempty"` // IDS matched but let it through
+}
+
+func (d *Defenses) sum() { d.Total = d.IDS + d.Bans + d.Trips + d.Logins + d.Firewall }
+
+// event takes in the times of some of r's events.
+func (r *InboundIP) event(first, last time.Time) {
+	if !first.IsZero() && (r.First.IsZero() || first.Before(r.First)) {
+		r.First = first
+	}
+	if last.After(r.Last) {
+		r.Last = last
+	}
 }
 
 // Order for the explorer's lists.
@@ -74,6 +102,10 @@ type ListQuery struct {
 	Flagged bool // only malicious/suspicious
 	Order   string
 	Limit   int
+	// Drops lists addresses whose only event is the router's firewall
+	// dropping them (Inbound IPs). Otherwise drops are only counted for
+	// addresses listed for something else.
+	Drops bool
 }
 
 func (q *ListQuery) norm() error {
@@ -85,9 +117,63 @@ func (q *ListQuery) norm() error {
 	return err
 }
 
+// The window queries InboundIPs runs, one per source: per address, counts
+// and the earliest and latest event. Each is pinned to its table's time
+// index. Left to itself SQLite reads the whole table in address order (no
+// sort for the GROUP BY), which costs all of history for a one-day window.
+// plan_test.go holds them to it.
+const (
+	inboundHits = `SELECT client_ip, count(*), sum(status BETWEEN 400 AND 499), min(ts), max(ts),
+		group_concat(DISTINCT site) FROM hits INDEXED BY hits_ts WHERE ts >= ? GROUP BY client_ip`
+	inboundAlerts = `SELECT src_ip, sum(action = 'blocked'), sum(action = 'allowed'), min(ts), max(ts)
+		FROM ids_alerts INDEXED BY ids_alerts_ts WHERE ts >= ? GROUP BY src_ip`
+	inboundTrips = `SELECT key, count(*), 0, min(tripped_at), max(tripped_at)
+		FROM breaker_trips INDEXED BY breaker_trips_tripped_at WHERE tripped_at >= ? GROUP BY key`
+	inboundLogins = `SELECT ip, count(*), 0, min(ts), max(ts)
+		FROM auth_failures INDEXED BY auth_failures_ts WHERE ts >= ? GROUP BY ip`
+	// Firewall drops over the window, for ListQuery.Drops: every address
+	// the router dropped, typically 1k-10k addresses a day.
+	inboundDrops = `SELECT client_ip, count(*), 0, min(ts), max(ts)
+		FROM connections INDEXED BY connections_dropped WHERE action IN ('drop', 'reject') AND ts >= ? GROUP BY client_ip`
+)
+
+// droppedFor is firewall drops since a time for a list of addresses (the
+// IN list is appended): by address, so it costs what the list is long.
+const droppedFor = `SELECT client_ip, count(*), 0, min(ts), max(ts) FROM connections INDEXED BY connections_client_ip
+	WHERE action IN ('drop', 'reject') AND ts >= ? AND client_ip IN `
+
 // InboundIPs lists the public addresses that hit our sites, got banned,
-// raised IDS alerts or tripped a breaker since q.Since.
+// raised IDS alerts, tripped a breaker or had a login refused since q.Since,
+// each with its 30-day defense count.
 func (s *Store) InboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
+	out, err := s.inboundIPs(q, now)
+	if err != nil {
+		return nil, err
+	}
+	// Only for the rows going out, by address: the cost follows the page,
+	// not the tables. Bans come with the intel.
+	ips := make([]string, len(out))
+	for i, r := range out {
+		ips[i] = r.IP
+	}
+	d30, err := s.DefenseCounts(ips, now.AddDate(0, 0, -30))
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		r := &out[i]
+		d := d30[r.IP]
+		if r.Intel != nil {
+			d.Bans = r.Intel.Bans30d
+		}
+		d.sum()
+		r.Defenses30d = d.Total
+	}
+	return out, nil
+}
+
+// inboundIPs is InboundIPs without the 30-day counts.
+func (s *Store) inboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 	if err := q.norm(); err != nil {
 		return nil, err
 	}
@@ -108,8 +194,7 @@ func (s *Store) InboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 		}
 		return m[k]
 	}
-	rows, err := s.query(`SELECT client_ip, count(*), sum(status BETWEEN 400 AND 499), min(ts), max(ts),
-		group_concat(DISTINCT site) FROM hits WHERE ts >= ? GROUP BY client_ip`, since)
+	rows, err := s.query(inboundHits, since)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +207,8 @@ func (s *Store) InboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 			return nil, err
 		}
 		if r := get(ip); r != nil {
-			r.Hits, r.Errors4xx, r.First, r.Last = n, e4, parseTime(first), parseTime(last)
+			r.Hits, r.Errors4xx = n, e4
+			r.event(parseTime(first), parseTime(last))
 			if sites.String != "" {
 				r.Sites = strings.Split(sites.String, ",")
 			}
@@ -132,31 +218,29 @@ func (s *Store) InboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	counts := []struct {
+	sources := []struct {
 		q   string
-		set func(*InboundIP, int64, int64)
+		set func(*Defenses, int64, int64)
 	}{
-		{`SELECT src_ip, sum(action = 'allowed'), sum(action = 'blocked') FROM ids_alerts WHERE ts >= ? GROUP BY src_ip`,
-			func(r *InboundIP, a, b int64) { r.AlertsAllowed, r.AlertsBlocked = a, b }},
-		{`SELECT key, count(*), 0 FROM breaker_trips WHERE tripped_at >= ? GROUP BY key`,
-			func(r *InboundIP, a, _ int64) { r.Trips = a }},
-		{`SELECT ip, count(*), 0 FROM auth_failures WHERE ts >= ? GROUP BY ip`,
-			func(r *InboundIP, a, _ int64) { r.AuthFailures = a }},
+		{inboundAlerts, func(d *Defenses, blocked, allowed int64) { d.IDS, d.AlertsAllowed = blocked, allowed }},
+		{inboundTrips, func(d *Defenses, n, _ int64) { d.Trips = n }},
+		{inboundLogins, func(d *Defenses, n, _ int64) { d.Logins = n }},
 	}
-	for _, c := range counts {
-		rows, err := s.query(c.q, since)
+	for _, src := range sources {
+		rows, err := s.query(src.q, since)
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
-			var ip string
+			var ip, first, last string
 			var a, b int64
-			if err := rows.Scan(&ip, &a, &b); err != nil {
+			if err := rows.Scan(&ip, &a, &b, &first, &last); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			if r := get(ip); r != nil {
-				c.set(r, a, b)
+				src.set(&r.Defenses, a, b)
+				r.event(parseTime(first), parseTime(last))
 			}
 		}
 		rows.Close()
@@ -171,16 +255,64 @@ func (s *Store) InboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 	for _, b := range bans {
 		if r := get(b.IP); r != nil {
 			if !b.Restored {
-				r.Bans++
+				r.Defenses.Bans++
 			}
 			if b.HitsDuring > 0 {
-				r.Leaks++
+				r.Defenses.Leaks++
+			}
+			r.event(b.BannedAt, b.BannedAt)
+		}
+	}
+	// Firewall drops last: unless asked for, they only add to addresses
+	// already listed, looked up by address.
+	drops := func(rows *sql.Rows, err error) error {
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var ip, first, last string
+			var n, zero int64
+			if err := rows.Scan(&ip, &n, &zero, &first, &last); err != nil {
+				return err
+			}
+			if r := get(ip); r != nil {
+				r.Defenses.Firewall = n
+				r.event(parseTime(first), parseTime(last))
+			}
+		}
+		return rows.Err()
+	}
+	if q.Drops {
+		// The explorer opens the database read-only, so the index comes from
+		// the writer's schema: until that restarts on a new version, say so
+		// rather than fail with "no such index".
+		var n int
+		if err := s.queryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'connections_dropped'`).Scan(&n); err != nil {
+			return nil, err
+		}
+		if n == 0 {
+			return nil, BadQueryError("listing firewall-only addresses needs the connections_dropped index, which dnscount syslog creates when it next starts")
+		}
+		if err := drops(s.query(inboundDrops, since)); err != nil {
+			return nil, err
+		}
+	} else {
+		listed := slices.Collect(maps.Keys(m))
+		for chunk := range slices.Chunk(listed, maxVars) {
+			args := []any{since}
+			for _, ip := range chunk {
+				args = append(args, ip)
+			}
+			if err := drops(s.query(droppedFor+`(`+placeholders(len(chunk))+`) GROUP BY client_ip`, args...)); err != nil {
+				return nil, err
 			}
 		}
 	}
 	out := make([]InboundIP, 0, len(m))
 	ips := make([]string, 0, len(m))
 	for k, r := range m {
+		r.Defenses.sum()
 		out = append(out, *r)
 		ips = append(ips, k)
 	}
@@ -207,7 +339,7 @@ func (s *Store) InboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 	}
 	out = keep
 	activity := func(r InboundIP) int64 {
-		return r.Hits + r.Bans + r.AlertsAllowed + r.AlertsBlocked + r.Trips + r.AuthFailures
+		return r.Hits + r.Defenses.Total + r.Defenses.AlertsAllowed
 	}
 	slices.SortFunc(out, func(a, b InboundIP) int {
 		switch q.Order {
@@ -226,6 +358,59 @@ func (s *Store) InboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 		return cmp.Or(cmp.Compare(activity(b), activity(a)), strings.Compare(a.IP, b.IP))
 	})
 	return out[:min(len(out), q.Limit)], nil
+}
+
+// DefenseCounts counts, for each of ips, the IDS blocks, breaker trips,
+// refused logins and firewall drops since `since`. Bans are BanCounts (restores need pairing).
+// The lookups go by address, so they cost what the list is long.
+func (s *Store) DefenseCounts(ips []string, since time.Time) (map[string]Defenses, error) {
+	out := map[string]Defenses{}
+	for chunk := range slices.Chunk(ips, maxVars) {
+		args := []any{fmtTime(since)}
+		for _, ip := range chunk {
+			args = append(args, ip)
+		}
+		in := placeholders(len(chunk))
+		for _, src := range []struct {
+			q   string
+			set func(*Defenses, int64)
+		}{
+			{`SELECT src_ip, count(*) FROM ids_alerts WHERE action = 'blocked' AND ts >= ? AND src_ip IN (` + in + `) GROUP BY src_ip`,
+				func(d *Defenses, n int64) { d.IDS = n }},
+			{`SELECT key, count(*) FROM breaker_trips WHERE tripped_at >= ? AND key IN (` + in + `) GROUP BY key`,
+				func(d *Defenses, n int64) { d.Trips = n }},
+			{`SELECT ip, count(*) FROM auth_failures WHERE ts >= ? AND ip IN (` + in + `) GROUP BY ip`,
+				func(d *Defenses, n int64) { d.Logins = n }},
+			{`SELECT client_ip, count(*) FROM connections INDEXED BY connections_client_ip
+				WHERE action IN ('drop', 'reject') AND ts >= ? AND client_ip IN (` + in + `) GROUP BY client_ip`,
+				func(d *Defenses, n int64) { d.Firewall = n }},
+		} {
+			rows, err := s.query(src.q, args...)
+			if err != nil {
+				return nil, err
+			}
+			for rows.Next() {
+				var ip string
+				var n int64
+				if err := rows.Scan(&ip, &n); err != nil {
+					rows.Close()
+					return nil, err
+				}
+				d := out[ip]
+				src.set(&d, n)
+				out[ip] = d
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for ip, d := range out {
+		d.sum()
+		out[ip] = d
+	}
+	return out, nil
 }
 
 // flaggedRank is the verdict rank (enrich.VerdictRank) from which a looked-up

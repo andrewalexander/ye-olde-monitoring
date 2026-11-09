@@ -484,7 +484,7 @@ func TestAuthFailuresInbound(t *testing.T) {
 	x.index(t)
 	since := now.AddDate(0, 0, -30)
 	in, err := x.ro.InboundIPs(store.ListQuery{Since: since}, now)
-	if err != nil || len(in) != 1 || in[0].IP != "203.0.113.44" || in[0].AuthFailures != 2 {
+	if err != nil || len(in) != 1 || in[0].IP != "203.0.113.44" || in[0].Defenses.Logins != 2 {
 		t.Fatalf("inbound: %+v %v", in, err)
 	}
 	p, err := x.ro.IPProfile("203.0.113.44", since, now)
@@ -630,4 +630,111 @@ func TestNeighbourOnlyDeviceIsLAN(t *testing.T) {
 	if lan, err := x.ro.IsLAN(v6); err != nil || !lan {
 		t.Errorf("IsLAN(%s) = %v, %v", v6, lan, err)
 	}
+}
+
+// Every inbound address gets its first and last event from whatever it did,
+// not only from web hits, and what we did about it is one Defenses tally.
+func TestInboundTimesAndDefenses(t *testing.T) {
+	x := openExplorer(t)
+	st := x.primary
+	t0 := time.Now().UTC().Truncate(time.Second) // Bans30d counts back from the wall clock
+	at := func(d time.Duration) time.Time { return t0.Add(-d) }
+	const (
+		idsOnly   = "198.51.100.10"
+		banOnly   = "198.51.100.11"
+		tripOnly  = "198.51.100.12"
+		loginOnly = "198.51.100.13"
+		mixed     = "198.51.100.14"
+		dropOnly  = "198.51.100.15"
+	)
+	alert := func(h, ip, action string, ts time.Time) ingest.Record {
+		return ingest.Record{Alert: &ingest.IDSAlert{Hash: h, TS: ts, SrcIP: ip, DstIP: "192.0.2.1", Action: action, Source: "unifi-cef"}}
+	}
+	conn := func(h, ip, action string, ts time.Time) ingest.Record {
+		return ingest.Record{Conn: &ingest.Conn{Hash: h, TS: ts, ClientIP: ip, DstIP: "192.0.2.1", DstPort: 22, Proto: "tcp",
+			Action: action, Rule: "WAN_LOCAL-D-1", Source: "unifi-fw"}}
+	}
+	if _, err := st.InsertRecords([]ingest.Record{
+		alert("i1", idsOnly, "blocked", at(5*time.Hour)),
+		alert("i2", idsOnly, "blocked", at(2*time.Hour)),
+		alert("i3", idsOnly, "blocked", at(20*24*time.Hour)), // outside the window, inside 30 days
+		alert("i4", idsOnly, "blocked", at(40*24*time.Hour)), // older than 30 days
+		alert("m1", mixed, "allowed", at(time.Hour)),
+		conn("c1", idsOnly, "drop", at(8*time.Hour)),       // counted for a listed address, and its first event
+		conn("c2", idsOnly, "drop", at(25*24*time.Hour)),   // 30 days only
+		conn("c3", mixed, "accept", at(7*time.Hour)),       // let through: not a defense, not an event here
+		conn("c4", dropOnly, "drop", at(10*time.Minute)),   // only listed when asked for
+		conn("c5", dropOnly, "reject", at(20*time.Minute)), // rejects count as drops
+		{Auth: &ingest.AuthFailure{Hash: "l1", TS: at(3 * time.Hour), Source: "jellyfin", IP: loginOnly, User: "admin"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ban(t, st, ingest.Ban{TS: at(4 * time.Hour), Event: "ban", Jail: "sshd", IP: banOnly})
+	if _, err := st.InsertTrip(store.Trip{TrippedAt: at(30 * time.Minute), CooldownUntil: t0, Breaker: "probe", Key: tripOnly,
+		Reason: "test", FirstSeen: at(time.Hour), Detail: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	addHits(t, st, mixed, "jellyfin.example", at(6*time.Hour))
+
+	in, err := x.ro.InboundIPs(store.ListQuery{Since: at(24 * time.Hour), Order: store.OrderRecent}, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]store.InboundIP{}
+	for _, r := range in {
+		got[r.IP] = r
+	}
+	for _, c := range []struct {
+		ip          string
+		first, last time.Time
+		d           store.Defenses
+		d30         int64
+	}{
+		{idsOnly, at(8 * time.Hour), at(2 * time.Hour), store.Defenses{Total: 3, IDS: 2, Firewall: 1}, 5},
+		{banOnly, at(4 * time.Hour), at(4 * time.Hour), store.Defenses{Total: 1, Bans: 1}, 1},
+		{tripOnly, at(30 * time.Minute), at(30 * time.Minute), store.Defenses{Total: 1, Trips: 1}, 1},
+		{loginOnly, at(3 * time.Hour), at(3 * time.Hour), store.Defenses{Total: 1, Logins: 1}, 1},
+		{mixed, at(6 * time.Hour), at(time.Hour), store.Defenses{AlertsAllowed: 1}, 0}, // first from the hit, last from the alert
+	} {
+		r, ok := got[c.ip]
+		if !ok {
+			t.Errorf("%s missing", c.ip)
+			continue
+		}
+		if !r.First.Equal(c.first) || !r.Last.Equal(c.last) {
+			t.Errorf("%s: first %v last %v, want %v %v", c.ip, r.First, r.Last, c.first, c.last)
+		}
+		if r.Defenses != c.d || r.Defenses30d != c.d30 {
+			t.Errorf("%s: defenses %+v (30d %d), want %+v (30d %d)", c.ip, r.Defenses, r.Defenses30d, c.d, c.d30)
+		}
+	}
+	if len(in) != 5 || in[0].IP != tripOnly || in[1].IP != mixed {
+		t.Errorf("recent order: %v", ips(in))
+	}
+
+	// Asked for, addresses the firewall only dropped are listed too.
+	in, err = x.ro.InboundIPs(store.ListQuery{Since: at(24 * time.Hour), Order: store.OrderRecent, Drops: true}, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(in) != 6 || in[0].IP != dropOnly {
+		t.Fatalf("with drops: %v", ips(in))
+	}
+	if r := in[0]; r.Defenses != (store.Defenses{Total: 2, Firewall: 2}) || r.Defenses30d != 2 ||
+		!r.First.Equal(at(20*time.Minute)) || !r.Last.Equal(at(10*time.Minute)) {
+		t.Errorf("drop-only: %+v", r)
+	}
+	for _, r := range in {
+		if r.IP == idsOnly && r.Defenses.Firewall != 1 {
+			t.Errorf("idsOnly with drops: %+v", r.Defenses)
+		}
+	}
+}
+
+func ips(in []store.InboundIP) []string {
+	var out []string
+	for _, r := range in {
+		out = append(out, r.IP)
+	}
+	return out
 }

@@ -98,14 +98,24 @@ Records
 Tables
 ------
 
-/api/ips?[since=7d][&order=flagged|top|bottom|new|recent][&limit=100]
+/api/ips?[since=7d][&order=flagged|top|bottom|new|recent][&drops=show][&limit=100]
   Public addresses that hit our sites, were banned, raised IDS alerts,
   tripped a breaker or had a login refused. LAN devices (any address that
-  used the router's DNS)
-  never appear.
-  [{"ip","hits","errors_4xx","first","last","sites","bans","leaks",
-    "alerts_allowed","alerts_blocked","trips","auth_failures", ...intel}]
-  auth_failures: logins an app refused (Jellyfin's log).
+  used the router's DNS) never appear.
+  [{"ip","hits","errors_4xx","sites","first","last",
+    "defenses": {"total","ids","bans","trips","logins","firewall","leaks","alerts_allowed"},
+    "defenses_30d", ...intel}]
+  first, last: its earliest and latest event of any kind (hit, IDS alert,
+    ban, trip, refused login, firewall drop) in the window. sites: web hits only.
+  defenses: what was done about it in the window. total is ids (IDS/IPS
+    blocked) + bans (fail2ban, restores not counted) + trips (circuit
+    breaker) + logins (refused by an app) + firewall (router firewall drops
+    and rejects). leaks (bans hits got through)
+    and alerts_allowed (IDS alerts let through) are warnings, not in total.
+  defenses_30d: total over the 30 days to now, whatever since= is.
+  drops=show also lists addresses whose only event is a firewall drop
+    (typically 1k-10k addresses a day). Without it, drops are counted only for addresses
+    listed for something else.
 
 /api/ip/{ip}?[since=30d]
   One address: intel with every list row ("matches", including lists it

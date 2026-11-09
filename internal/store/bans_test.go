@@ -208,7 +208,7 @@ func TestBanCountsSkipRestores(t *testing.T) {
 		t.Errorf("intel: %+v %v", in[a], err)
 	}
 	ips, err := x.ro.InboundIPs(store.ListQuery{Since: t0.Add(-time.Hour)}, time.Now())
-	if err != nil || len(ips) != 1 || ips[0].Bans != 3 || ips[0].Bans30d != 3 {
+	if err != nil || len(ips) != 1 || ips[0].Defenses.Bans != 3 || ips[0].Bans30d != 3 || ips[0].Defenses30d != 3 {
 		t.Errorf("inbound: %+v %v", ips, err)
 	}
 }

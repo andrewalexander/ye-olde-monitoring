@@ -133,6 +133,8 @@ pre.detail { overflow-x: auto; max-width: 100%; padding: 10px; border: 1px solid
 .leak { color: var(--critical); font-weight: 700; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .tag { font-size: 12px; padding: 0 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--ink-2); }
+.defenses { display: inline-flex; align-items: center; gap: 6px; }
+.defenses .num { font-variant-numeric: tabular-nums; min-width: 2ch; text-align: right; }
 
 .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; max-width: 100%; }
 .tabulator { font-size: 13px; border: 0; background: var(--surface); }

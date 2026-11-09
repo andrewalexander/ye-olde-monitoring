@@ -177,6 +177,52 @@ function censysWebCol() {
 function bans30() {
   return col("Bans 30d", "bans_30d", "num", { headerTooltip: "Times fail2ban banned this address in the last 30 days, all jails, not counting restarts" });
 }
+// What we did about an inbound address, one column. The chips name the kinds
+// (each is a section of the IP's page); the tooltip has the counts. A warning
+// is a defense that didn't hold (a leaked ban) or a detection nothing acted
+// on (an IDS alert let through).
+const DEFENSE_KINDS = [
+  ["ids", "ids", "IDS blocks"], ["bans", "ban", "bans"], ["trips", "trip", "breaker trips"], ["logins", "login", "refused logins"],
+  ["firewall", "fw", "firewall drops"],
+];
+function defenseKinds(d) {
+  const k = DEFENSE_KINDS.filter(([f]) => d[f] > 0).map(([, chip]) => chip);
+  if (d.leaks > 0) k.push("leak");
+  if (d.alerts_allowed > 0) k.push("allowed");
+  return k;
+}
+function defenseTitle(d) {
+  const lines = DEFENSE_KINDS.filter(([f]) => d[f] > 0).map(([f, , name]) => `${fmtNum(d[f])} ${name}`);
+  if (d.leaks > 0) lines.push(`\u26a0 ${fmtNum(d.leaks)} ban(s) leaked: hits got through while banned`);
+  if (d.alerts_allowed > 0) lines.push(`\u26a0 ${fmtNum(d.alerts_allowed)} IDS alert(s) let through`);
+  return lines.join("\n");
+}
+function defensesCol() {
+  return col("Defenses", "defenses", "text", {
+    formatter: (c) => {
+      const d = c.getValue() || {};
+      const warn = d.leaks > 0 || d.alerts_allowed > 0;
+      if (!d.total && !warn) return document.createTextNode("");
+      const chips = DEFENSE_KINDS.filter(([f]) => d[f] > 0).map(([, chip]) => el("span", { class: "tag", text: chip }));
+      return el("span", { class: "defenses", title: defenseTitle(d) },
+        el("span", { class: "num", text: fmtNum(d.total || 0) }), el("span", { class: "tags" }, chips),
+        warn ? el("span", { class: "leak", text: "\u26a0" }) : null);
+    },
+    sorter: (a, b) => ((a || {}).total || 0) - ((b || {}).total || 0),
+    headerFilterPlaceholder: "ids, ban, trip, login, fw, leak, allowed",
+    headerFilterFunc: (term, d) => defenseKinds(d || {}).some((k) => k.includes(String(term).toLowerCase().trim())),
+    headerTooltip: "What we did about it in this window: IDS/IPS blocks, fail2ban bans, breaker trips, refused logins and firewall drops. \u26a0 marks a ban that leaked or an IDS alert let through. Filter by kind: ids, ban, trip, login, fw, leak, allowed. Open the address for each event.",
+  });
+}
+function hitsCol() {
+  return col("Hits", "hits", "num", {
+    formatter: (c) => {
+      const r = c.getRow().getData();
+      return el("span", { text: fmtNum(r.hits), title: r.hits ? `${fmtNum(r.errors_4xx)} answered 4xx` : null });
+    },
+    headerTooltip: "Requests that reached our sites; hover for how many were answered 4xx",
+  });
+}
 function rank(v) { return { malicious: 3, suspicious: 2, info: 1 }[v] || 0; }
 
 function table(container, rows, columns, opts) {
@@ -211,15 +257,16 @@ let tablesBuilding = [];
 const LIST_VIEWS = {
   ips: {
     title: "Inbound IPs",
-    lede: "Public addresses that hit our sites, were banned, raised IDS alerts or tripped a breaker. Flagged ones first.",
-    url: "/api/ips", options: ["order"],
+    lede: "Public addresses that reached us, and what we did about it: IDS blocks, bans, breaker trips, refused logins, firewall drops. First and last seen count every kind of event. Addresses the firewall only dropped are hidden unless you show them. Open an address for each event.",
+    url: "/api/ips", options: ["order", "drops"],
     columns: () => [
       col("Verdict", "verdict", "verdict"), col("IP", "ip", "ip"), col("Feeds", "feeds", "tags"),
       col("AS", "asn", "text", { formatter: (c) => document.createTextNode(asnText(c.getRow().getData())) }),
       col("Owner", "as_owner"), col("CC", "country"),
-      col("Hits", "hits", "num"), col("4xx", "errors_4xx", "num"), col("Bans", "bans", "num"), bans30(), abuseCol(), portsCol(),
-      col("Leaks", "leaks", "leak"), col("Alerts", "alerts_allowed", "num"), col("Blocked", "alerts_blocked", "num"),
-      col("Trips", "trips", "num"), col("Refused logins", "auth_failures", "num"), col("Sites", "sites", "list"), col("First", "first", "time"), col("Last", "last", "time"),
+      hitsCol(), defensesCol(),
+      col("Defenses 30d", "defenses_30d", "num", { headerTooltip: "The same kinds over the last 30 days, whatever the window" }),
+      abuseCol(), portsCol(), col("Sites", "sites", "list"),
+      col("First seen", "first", "time"), col("Last seen", "last", "time"),
     ],
   },
   domains: {
@@ -351,6 +398,11 @@ function optionControls(view, def, q) {
         [["", "any"], ["allowed", "allowed"], ["blocked", "blocked"]].map(([v, t]) => el("option", { value: v, text: t })));
       s.value = q.get("action") || "";
       box.append(el("label", {}, "action ", s));
+    } else if (o === "drops") {
+      const s = el("select", { onchange: (e) => set("drops", e.target.value) },
+        [["", "hidden"], ["show", "shown"]].map(([v, t]) => el("option", { value: v, text: t })));
+      s.value = q.get("drops") || "";
+      box.append(el("label", { title: "Addresses whose only event is the router's firewall dropping them: typically 1k-10k a day" }, "firewall-only ", s));
     } else if (o === "status") {
       const i = el("input", { type: "text", size: 6, placeholder: "404, 4xx", value: q.get("status") || "" });
       i.addEventListener("change", () => set("status", i.value.trim()));
