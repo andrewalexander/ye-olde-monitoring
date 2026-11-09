@@ -35,14 +35,16 @@
 # examples/caddy-site on localhost:8002: static files, Caddy's log is the only
 # record of visits, and the counter is computed from it. In production the
 # log names the site by its Host (example.com). Here both sites are
-# "localhost", so this one's log entries are renamed to "caddy-site".
+# "localhost", so this one's log entries are renamed to $CADDY_SITE_NAME
+# ("caddy-site" unless docker-compose.yml is given another; the files come
+# from $CADDY_SITE_DIR).
 :81 {
 	log {
 		output file /var/log/caddy/access.log {
 			mode 644
 		}
 		format filter {
-			request>host replace caddy-site
+			request>host replace {$CADDY_SITE_NAME}
 			wrap json
 		}
 	}
@@ -54,6 +56,13 @@
 	handle {
 		root * /srv-caddy-site
 		try_files {path} {path}.html
+		file_server
+	}
+
+	handle_errors 404 {
+		root * /srv-caddy-site
+		@page file /404.html
+		rewrite @page /404.html
 		file_server
 	}
 }

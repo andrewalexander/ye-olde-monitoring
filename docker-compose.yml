@@ -1,7 +1,9 @@
 # Local proof of the whole counter/hits path. `docker compose up --build` (or `tilt up`), then:
 #   http://localhost:8000          test page behind Caddy (counter + links that make hits)
 #   http://localhost:8001          examples/app: Go middleware shipping hits to /ingest
-#   http://localhost:8002          examples/caddy-site: static files behind Caddy (the log is the record)
+#   http://localhost:8002          examples/caddy-site: static files behind Caddy (the log is the record).
+#                                  Serve your own site there instead, counter and all:
+#                                  CADDY_SITE_DIR=~/src/mysite/site CADDY_SITE_NAME=mysite.org docker compose up -d
 #   http://localhost:8081/api/health  breaker stats (published on 127.0.0.1 only)
 #   http://localhost:8090          the explorer (published on 127.0.0.1 only)
 #   sh scripts/smoke.sh            scripted check of all of it
@@ -25,7 +27,7 @@ services:
     # only gets it on 127.0.0.1 via Caddy's :8081 listener. (Logs a warning.)
     command: ["serve", "-addr", ":8080", "-admin-addr", ":8081",
               "-trusted-proxies", "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
-              "-counter-sites", "localhost,caddy-site,example", "-counter-ttl", "2s"]
+              "-counter-sites", "localhost,${CADDY_SITE_NAME:-caddy-site},example", "-counter-ttl", "2s"]
 
   caddy-log:
     <<: *dnscount
@@ -45,6 +47,8 @@ services:
 
   caddy:
     image: caddy:2.10
+    environment:
+      CADDY_SITE_NAME: ${CADDY_SITE_NAME:-caddy-site}
     depends_on: [dnscount]
     ports:
       - "8000:80"
@@ -54,7 +58,7 @@ services:
     volumes:
       - ./deploy/local/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./deploy/local/site:/srv:ro
-      - ./examples/caddy-site:/srv-caddy-site:ro
+      - ${CADDY_SITE_DIR:-./examples/caddy-site}:/srv-caddy-site:ro
       - caddy-logs:/var/log/caddy
 
   app:
