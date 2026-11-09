@@ -19,8 +19,6 @@ func (s *Store) Check(now time.Time) ([]string, error) {
 		{"dns_queries with uppercase or trailing-dot domain", `SELECT count(*) FROM dns_queries WHERE domain != lower(domain) OR domain LIKE '%.'`},
 		{"dns_replies with empty domain", `SELECT count(*) FROM dns_replies WHERE domain = ''`},
 		{"connections with empty client_ip or dst_ip", `SELECT count(*) FROM connections WHERE client_ip = '' OR dst_ip = ''`},
-		{"counters higher than the hits recorded for their site", `SELECT count(*) FROM counters c
-			WHERE c.count > (SELECT count(*) FROM hits h WHERE h.site = c.site)`},
 	}
 	for _, table := range []string{"hits", "dns_queries", "dns_replies", "connections", "ids_alerts", "bans", "lan_sightings"} {
 		counts = append(counts,

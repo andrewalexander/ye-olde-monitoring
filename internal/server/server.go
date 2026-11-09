@@ -38,8 +38,11 @@ type Config struct {
 	// Token guards /ingest. Empty disables /ingest entirely.
 	Token          string
 	TrustedProxies []netip.Prefix
-	// CounterPerMinute is how many counter increments one IP gets per minute.
-	CounterPerMinute int
+	// CounterSites are the sites /counter.* answers for; others get 404.
+	// The number is computed from hits (store.Visitors), never written here.
+	CounterSites []string
+	// CounterTTL is how long a site's number is reused before it's recomputed.
+	CounterTTL time.Duration
 	// IngestPerMinute / IngestBadPerMinute limit /ingest per IP.
 	IngestPerMinute    int
 	IngestBadPerMinute int
@@ -50,9 +53,11 @@ type Config struct {
 }
 
 type Server struct {
-	cfg     Config
-	Counter *guard.Breaker
-	Ingest  *guard.Breaker
+	cfg    Config
+	Ingest *guard.Breaker
+
+	counterMu sync.Mutex
+	counter   map[string]cached // only CounterSites have keys
 
 	checkMu   sync.Mutex
 	checkAt   time.Time
@@ -64,8 +69,8 @@ func New(cfg Config) *Server {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	if cfg.CounterPerMinute == 0 {
-		cfg.CounterPerMinute = 30
+	if cfg.CounterTTL == 0 {
+		cfg.CounterTTL = time.Minute
 	}
 	if cfg.IngestPerMinute == 0 {
 		cfg.IngestPerMinute = 600
@@ -85,59 +90,24 @@ func New(cfg Config) *Server {
 			Now: cfg.Now, OnTrip: cfg.OnTrip, OnEnd: cfg.OnEnd,
 		})
 	}
-	return &Server{
+	s := &Server{
 		cfg:     cfg,
-		Counter: mk("counter", cfg.CounterPerMinute, 20),
 		Ingest:  mk("ingest", cfg.IngestPerMinute, cfg.IngestBadPerMinute),
+		counter: map[string]cached{},
 	}
+	for _, site := range cfg.CounterSites {
+		s.counter[site] = cached{}
+	}
+	return s
 }
 
 // Public is the internet-facing handler.
 func (s *Server) Public() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /counter.svg", s.counter("svg"))
-	mux.HandleFunc("GET /counter.txt", s.counter("txt"))
-	mux.HandleFunc("GET /counter.js", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		w.Header().Set("Cache-Control", "public, max-age=3600")
-		io.WriteString(w, counterJS)
-	})
+	mux.HandleFunc("GET /counter.svg", s.counterHandler("svg"))
+	mux.HandleFunc("GET /counter.txt", s.counterHandler("txt"))
 	mux.HandleFunc("/ingest", s.ingest)
 	return mux
-}
-
-func (s *Server) counter(format string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ip, _ := hit.ClientIP(r, s.cfg.TrustedProxies)
-		site := r.URL.Query().Get("site")
-		if !hit.ValidSite(site) {
-			s.Counter.Bad(ip, "malformed", s.event(r, nil, "bad site"))
-			http.Error(w, "site must be [A-Za-z0-9._-]{1,64}", http.StatusBadRequest)
-			return
-		}
-		// Over the limit still gets the image, it just doesn't count, so
-		// nobody can pump the counter and the page never shows a broken image.
-		if r.URL.Query().Get("noinc") == "" && s.Counter.Allow(ip, s.event(r, nil, "")) {
-			h := hit.FromRequest(r, site, s.cfg.TrustedProxies)
-			h.TS, h.Source, h.Status, h.Count = s.cfg.Now().UTC(), "counter", http.StatusOK, true
-			h.Sanitize()
-			if _, err := s.cfg.Store.InsertHits([]hit.Hit{h}); err != nil {
-				s.cfg.Log.Printf("counter: %v", err)
-			}
-		}
-		n, err := s.cfg.Store.Counter(site)
-		if err != nil {
-			s.cfg.Log.Printf("counter: %v", err)
-		}
-		w.Header().Set("Cache-Control", "no-store")
-		if format == "txt" {
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			fmt.Fprintln(w, n)
-			return
-		}
-		w.Header().Set("Content-Type", "image/svg+xml")
-		w.Write(counterSVG(n))
-	}
 }
 
 func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {

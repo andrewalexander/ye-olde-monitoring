@@ -7,6 +7,7 @@ self:
     imports = [ self.nixosModules.default ];
     services.dnscount = {
       enable = true;
+      counterSites = [ "vm" ];
       syslog = {
         enable = true;
         address = "127.0.0.1";
@@ -40,7 +41,8 @@ self:
   testScript = ''
     machine.wait_for_unit("dnscount-serve.service")
     machine.wait_for_open_port(8080)
-    machine.succeed("curl -sf 'http://127.0.0.1:8080/counter.txt?site=vm' | grep -x 1")
+    machine.succeed("curl -sf 'http://127.0.0.1:8080/counter.txt?site=vm' | grep -x 0")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8080/counter.txt?site=other' | grep -x 404")
     machine.succeed("curl -sf http://127.0.0.1:8081/api/health")
 
     # The admin listener must not listen beyond localhost.

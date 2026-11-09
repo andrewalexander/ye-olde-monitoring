@@ -1,5 +1,6 @@
 # Local compose only. Mirrors deploy/Caddyfile.example, plus the admin and
-# explorer listeners, so the test page can show recent hits.
+# explorer listeners, so the test page can show recent hits, and a second
+# site (examples/caddy-site) built the way a real static site is.
 {
 	admin off
 	auto_https off
@@ -27,6 +28,32 @@
 
 	handle {
 		root * /srv
+		file_server
+	}
+}
+
+# examples/caddy-site on localhost:8002: static files, Caddy's log is the only
+# record of visits, and the counter is computed from it. In production the
+# log names the site by its Host (example.com). Here both sites are
+# "localhost", so this one's log entries are renamed to "caddy-site".
+:81 {
+	log {
+		output file /var/log/caddy/access.log {
+			mode 644
+		}
+		format filter {
+			request>host replace caddy-site
+			wrap json
+		}
+	}
+
+	handle /counter.* {
+		reverse_proxy dnscount:8080
+	}
+
+	handle {
+		root * /srv-caddy-site
+		try_files {path} {path}.html
 		file_server
 	}
 }

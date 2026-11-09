@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>caddy-site example</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body id="top">
+
+<header>
+  <h1>My Homepage</h1>
+  <p>a static site behind Caddy</p>
+  <marquee scrollamount="5">*** welcome *** no JavaScript was harmed in the making of this counter ***</marquee>
+  <nav>
+    <ul>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="/about">A page</a></li>
+      <li><a href="/no-such-page">A 404</a></li>
+    </ul>
+  </nav>
+</header>
+
+<main>
+<section id="how">
+  <h2>How it works</h2>
+  <article>
+    <p>This is how a real static site uses dnscount.
+       It's just files: <code>index.html</code>, <code>about.html</code> and
+       <code>style.css</code>, served by Caddy's <code>file_server</code>. There's no Go
+       and nothing to run.</p>
+    <ul>
+      <li>Caddy writes every request to its JSON access log, and
+          <code>dnscount ingest-access -follow</code> turns each line into a hit. That
+          log is the only record of a visit, and the fail2ban guard reads the same file.</li>
+      <li>The counter below is a plain <code>&lt;img src="/counter.svg?site=caddy-site"&gt;</code>.
+          Caddy proxies <code>/counter.*</code> to <code>dnscount serve</code>, which only
+          <i>reads</i>: one visitor per IP per day that loaded a page. Reloading doesn't
+          raise it, and nothing can be counted twice.</li>
+    </ul>
+    <footer><a href="#top">[Top]</a></footer>
+  </article>
+</section>
+</main>
+
+<footer>
+  <p>You are visitor number<br>
+    <img src="/counter.svg?site=caddy-site" alt="visitor counter" width="110" height="28"></p>
+  <small>Best viewed in Netscape Navigator 4.0 at 800x600</small>
+</footer>
+
+</body>
+</html>

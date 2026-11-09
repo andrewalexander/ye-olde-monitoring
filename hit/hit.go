@@ -38,8 +38,6 @@ type Hit struct {
 	Bytes        int64     `json:"bytes"`
 	UserAgent    string    `json:"user_agent,omitempty"`
 	Referer      string    `json:"referer,omitempty"`
-	// Count asks the store to also bump the public counter for Site.
-	Count bool `json:"count,omitempty"`
 }
 
 // NewID returns a random dedup key for a hit that has no raw line.

@@ -25,7 +25,7 @@ func (s *Server) Admin() http.Handler {
 	mux.HandleFunc("GET /api/health", rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
 		problems, err := s.checks(st)
 		return map[string]any{
-			"breakers":      []guard.Stats{s.Counter.Stats(), s.Ingest.Stats()},
+			"breakers":      []guard.Stats{s.Ingest.Stats()},
 			"data_problems": problems,
 		}, err
 	}))

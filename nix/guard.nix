@@ -137,12 +137,13 @@ in
 
       tripBreakers = mkOption {
         type = types.listOf types.str;
-        default = [ "counter" "ingest" ];
-        example = [ "counter" "ingest" "syslog" ];
+        default = [ "ingest" ];
+        example = [ "ingest" "syslog" ];
         description = ''
           Breakers whose trips ban the address (`dnscount-trip` jail, from
-          dnscount's journal). counter and ingest are what the public reaches;
-          syslog and syslog-not-allowed only ever see the LAN.
+          dnscount's journal). ingest is what the public reaches (the counter
+          only reads, so it has no breaker); syslog and syslog-not-allowed
+          only ever see the LAN.
         '';
       };
 

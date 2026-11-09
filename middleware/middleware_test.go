@@ -78,13 +78,15 @@ func TestLocalSinkWrites(t *testing.T) {
 	}
 	defer st.Close()
 	sink := NewLocalSink(st)
-	h := Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), sink, Options{Site: "s", Count: true})
+	h := Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), sink, Options{Site: "s"})
 	for range 10 {
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
 	}
 	sink.Close()
-	if n, _ := st.Counter("s"); n != 10 {
-		t.Errorf("counter = %d, want 10", n)
+	var n int
+	st.DB().QueryRow(`SELECT count(*) FROM hits WHERE site = 's'`).Scan(&n)
+	if n != 10 {
+		t.Errorf("hits = %d, want 10", n)
 	}
 }
 

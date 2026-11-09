@@ -27,8 +27,6 @@ type Options struct {
 	TrustedProxies []netip.Prefix
 	// SkipPaths are path prefixes not to record (health checks...).
 	SkipPaths []string
-	// Count also bumps the site's public visitor counter for each request.
-	Count bool
 }
 
 // Wrap records each request to next in sink.
@@ -41,7 +39,6 @@ func Wrap(next http.Handler, sink Sink, opts Options) http.Handler {
 			}
 		}
 		h := hit.FromRequest(r, opts.Site, opts.TrustedProxies)
-		h.Count = opts.Count
 		rw := &recorder{ResponseWriter: w}
 		defer func() {
 			h.Status, h.Bytes = rw.status, rw.bytes

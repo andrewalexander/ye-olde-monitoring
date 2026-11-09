@@ -13,7 +13,9 @@ example.com {
 	}
 
 	# --- dnscount: public counter ------------------------------------------
-	# <script src="/counter.js" data-site="example.com"></script>
+	# <img src="/counter.svg?site=example.com" alt="visitor counter">
+	# It only reads: the number is computed from the hits this log records
+	# (one per IP per day that loaded a page), for sites in -counter-sites.
 	handle /counter.* {
 		reverse_proxy 127.0.0.1:8080
 	}
@@ -29,10 +31,15 @@ example.com {
 		reverse_proxy 127.0.0.1:8080
 	}
 
-	# ...your existing site config...
+	# ...your existing site config: static files, or reverse_proxy to an app...
 	root * /srv/example.com
 	file_server
 }
+
+# Visitors to www count separately unless it redirects to the apex:
+# www.example.com {
+# 	redir https://example.com{uri} permanent
+# }
 
 # --- dnscount explorer: LAN only ---------------------------------------------
 # dnscount-explore.service listens on 127.0.0.1:8090 and has no auth, so give

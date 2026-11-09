@@ -256,7 +256,7 @@ func report(args []string) error {
 		}
 	case "trips":
 		ip := fs.String("ip", "", "only trips by this key/IP")
-		brk := fs.String("breaker", "", "only this breaker (counter|ingest|syslog|syslog-not-allowed)")
+		brk := fs.String("breaker", "", "only this breaker (ingest|syslog|syslog-not-allowed)")
 		run = func(st *store.Store, since time.Time) error {
 			trips, err := st.Trips(store.TripFilter{Since: since, Key: *ip, Breaker: *brk, Limit: *limit})
 			if err != nil {

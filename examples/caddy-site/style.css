@@ -1,0 +1,104 @@
+/* One stylesheet, almost no classes. A new page is just
+   HTML: <header>, <nav>, <main> of <section>s, <footer>. */
+
+:root {
+  --sky: #000060;
+  --box: #c0c0c0;
+  --ink: #000;
+  --yellow: #ff0;
+  --cyan: #0ff;
+  --lime: #3f3;
+  --visited: #f9c;
+}
+
+html { background: var(--sky); }
+
+body {
+  margin: 0 auto;
+  max-width: 820px;
+  padding: 16px;
+  color: #fff;
+  font: 17px/1.45 Georgia, "Times New Roman", serif;
+  /* a cheap starfield: two offset tiles of dots */
+  background:
+    radial-gradient(1px 1px at 20px 30px, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 90px 120px, #ccf 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 150px 60px, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 60px 170px, #aaf 50%, transparent 51%),
+    var(--sky);
+  background-size: 200px 200px;
+  overflow-wrap: break-word;
+}
+
+a { color: var(--yellow); }
+a:visited { color: var(--visited); }
+a:hover { color: var(--cyan); }
+
+h1, h2, h3 { font-family: Verdana, Geneva, sans-serif; line-height: 1.2; }
+h1 { color: var(--yellow); text-align: center; font-size: clamp(1.7em, 8vw, 2.4em); margin: 8px 0 0;
+     text-shadow: 3px 3px 0 #f00; letter-spacing: 1px; }
+h2 { color: var(--cyan); border-bottom: 3px ridge var(--box); padding-bottom: 2px; }
+h3 { color: #006; margin-bottom: 4px; }
+
+body > header { text-align: center; }
+body > header p { margin: 4px 0 12px; color: var(--cyan); font-style: italic; }
+
+marquee {
+  display: block;
+  color: var(--lime);
+  background: #000;
+  border: 2px inset var(--box);
+  font: bold 15px "Courier New", monospace;
+  padding: 2px 0;
+}
+
+/* the nav is a row of chunky grey buttons */
+nav ul { list-style: none; padding: 0; margin: 12px 0; display: flex; flex-wrap: wrap;
+         justify-content: center; gap: 8px; }
+nav a, nav a:visited {
+  display: inline-block;
+  background: var(--box);
+  color: var(--ink);
+  border: 3px outset #fff;
+  padding: 2px 12px;
+  font: bold 15px Verdana, Geneva, sans-serif;
+  text-decoration: none;
+}
+nav a:active { border-style: inset; }
+
+hr { border: 0; border-top: 4px ridge var(--box); margin: 24px 0; }
+
+/* each section's body sits in a beveled Windows-95 box */
+article, aside {
+  background: var(--box);
+  color: var(--ink);
+  border: 3px outset #fff;
+  padding: 8px 14px;
+  margin: 12px 0;
+}
+article a, article a:visited { color: #00e; }
+article a:visited { color: #551a8b; }
+article footer { text-align: right; font-size: 0.85em; }
+
+ul { padding-left: 1.4em; }
+code, pre { font-family: "Courier New", monospace; }
+pre { overflow-x: auto; }
+img { max-width: 100%; }
+
+/* the one class: a yellow-and-black "under construction" stripe */
+.construction {
+  background: repeating-linear-gradient(-45deg, #fc0 0 14px, #000 14px 28px);
+  border: 2px solid #000;
+  padding: 4px;
+  text-align: center;
+}
+.construction span {
+  background: #fc0;
+  color: #000;
+  font: bold 14px Verdana, Geneva, sans-serif;
+  padding: 2px 8px;
+}
+
+body > footer { text-align: center; margin-top: 24px; font-size: 0.95em; }
+body > footer img { vertical-align: middle; image-rendering: pixelated; }
+body > footer small { display: block; color: var(--box); margin-top: 12px; }

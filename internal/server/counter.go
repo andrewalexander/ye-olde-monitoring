@@ -4,8 +4,10 @@ package server
 
 import (
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // counterDigits is the zero-padded width of the counter.
@@ -36,18 +38,54 @@ func counterSVG(n int64) []byte {
 	return []byte(b.String())
 }
 
-// counterJS is a snippet a page can include with
-//
-//	<script src="https://collector/counter.js" data-site="blog"></script>
-//
-// It drops the counter image right where the script tag is.
-const counterJS = `(function () {
-  var s = document.currentScript;
-  if (!s) return;
-  var site = s.getAttribute("data-site") || location.hostname;
-  var img = document.createElement("img");
-  img.alt = "visitor counter";
-  img.src = new URL("counter.svg", s.src).href + "?site=" + encodeURIComponent(site);
-  s.parentNode.insertBefore(img, s);
-})();
-`
+type cached struct {
+	n  int64
+	at time.Time
+}
+
+// counterHandler serves the visitor counter for an allowed site. It only
+// reads: visits are whatever recorded the page loads (Caddy's log, usually),
+// and store.Visitors turns those into one number. Each site's number is
+// reused for CounterTTL, so a reload storm costs one query a minute.
+func (s *Server) counterHandler(format string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		site := r.URL.Query().Get("site")
+		n, ok, err := s.visitors(site)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			s.cfg.Log.Printf("counter %s: %v", site, err) // still draw the last number
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		if format == "txt" {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			fmt.Fprintln(w, n)
+			return
+		}
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Write(counterSVG(n))
+	}
+}
+
+// visitors returns site's number, recomputing it when it's older than
+// CounterTTL. ok is false for a site not in CounterSites.
+func (s *Server) visitors(site string) (n int64, ok bool, err error) {
+	s.counterMu.Lock()
+	defer s.counterMu.Unlock()
+	c, ok := s.counter[site]
+	if !ok {
+		return 0, false, nil
+	}
+	now := s.cfg.Now()
+	if !c.at.IsZero() && now.Sub(c.at) < s.cfg.CounterTTL {
+		return c.n, true, nil
+	}
+	v, err := s.cfg.Store.Visitors(site)
+	if err != nil {
+		return c.n, true, err
+	}
+	s.counter[site] = cached{n: v, at: now}
+	return v, true, nil
+}

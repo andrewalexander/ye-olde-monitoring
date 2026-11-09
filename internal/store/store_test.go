@@ -50,7 +50,7 @@ func importFile(t *testing.T, st *store.Store, file string, p ingest.LineParser)
 func rowCounts(t *testing.T, st *store.Store) map[string]int {
 	t.Helper()
 	out := map[string]int{}
-	for _, table := range []string{"hits", "dns_queries", "dns_replies", "connections", "counters"} {
+	for _, table := range []string{"hits", "dns_queries", "dns_replies", "connections"} {
 		var n int
 		if err := st.DB().QueryRow(`SELECT count(*) FROM ` + table).Scan(&n); err != nil {
 			t.Fatal(err)
@@ -79,7 +79,7 @@ func TestReimportIsIdempotent(t *testing.T) {
 		}
 	}
 	once := rowCounts(t, st)
-	want := map[string]int{"hits": 7, "dns_queries": 7 + 3 + 1 + 2, "dns_replies": 7 + 2 + 1 + 2, "connections": 2, "counters": 0}
+	want := map[string]int{"hits": 7, "dns_queries": 7 + 3 + 1 + 2, "dns_replies": 7 + 2 + 1 + 2, "connections": 2}
 	for k, v := range want {
 		if once[k] != v {
 			t.Errorf("%s = %d after one import, want %d", k, once[k], v)
@@ -152,22 +152,50 @@ func TestLookupThenConnect(t *testing.T) {
 	}
 }
 
-func TestCounterOnlyBumpsForNewHits(t *testing.T) {
+func TestVisitors(t *testing.T) {
 	st := open(t)
-	h := hit.Hit{Hash: "a", TS: now, Site: "s", Source: "test", ClientIP: "10.0.0.1", Count: true}
-	for range 3 { // same hit three times (a retried batch)
-		if _, err := st.InsertHits([]hit.Hit{h}); err != nil {
-			t.Fatal(err)
-		}
+	pg := func(ip, path string, status int, ts time.Time) hit.Hit {
+		return hit.Hit{Hash: hit.NewID(), TS: ts, Site: "s", Source: "caddy", ClientIP: ip, Method: "GET", Path: path, Status: status}
 	}
-	h2 := h
-	h2.Hash, h2.Count = "b", false
-	st.InsertHits([]hit.Hit{h2})
-	if n, _ := st.Counter("s"); n != 1 {
-		t.Errorf("counter = %d, want 1", n)
+	if _, err := st.InsertHits([]hit.Hit{
+		pg("10.0.0.1", "/", 200, now), pg("10.0.0.1", "/", 200, now), pg("10.0.0.1", "/a/", 200, now.Add(24*time.Hour)),
+		pg("10.0.0.2", "/about", 304, now), pg("10.0.0.3", "/img/x.gif", 200, now), pg("10.0.0.4", "/", 500, now),
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if n, _ := st.Counter("other"); n != 0 {
-		t.Errorf("unknown site counter = %d, want 0", n)
+	if n, err := st.Visitors("s"); err != nil || n != 3 {
+		t.Errorf("visitors = %d, %v, want 3", n, err)
+	}
+	if n, err := st.Visitors("other"); err != nil || n != 0 {
+		t.Errorf("unknown site = %d, %v, want 0", n, err)
+	}
+}
+
+// Databases from before the counter was computed have a counters table;
+// opening one drops it and keeps everything else.
+func TestOpenDropsOldCounters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.InsertHits([]hit.Hit{{Hash: "a", TS: now, Site: "s", Source: "caddy", ClientIP: "10.0.0.1", Method: "GET", Path: "/", Status: 200}})
+	if _, err := st.DB().Exec(`CREATE TABLE counters (site TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0)`); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	st, err = store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var n int
+	st.DB().QueryRow(`SELECT count(*) FROM sqlite_master WHERE name = 'counters'`).Scan(&n)
+	if n != 0 {
+		t.Error("counters table still there")
+	}
+	if v, _ := st.Visitors("s"); v != 1 {
+		t.Errorf("visitors after reopening = %d, want 1", v)
 	}
 }
 
@@ -181,7 +209,6 @@ func TestCheck(t *testing.T) {
 	db := st.DB()
 	db.Exec(`INSERT INTO dns_queries (ts, client_ip, domain, source, line_hash) VALUES ('2099-01-01T00:00:00.000000000Z', 'nope', 'Bad.', 'x', 'h1')`)
 	db.Exec(`INSERT INTO hits (ts, site, source, client_ip, status, line_hash) VALUES ('1999-01-01T00:00:00.000000000Z', 'www', 'x', '', 999, 'h2')`)
-	db.Exec(`INSERT INTO counters (site, count) VALUES ('ghost', 5)`)
 	problems, err := st.Check(now)
 	if err != nil {
 		t.Fatal(err)
@@ -190,7 +217,6 @@ func TestCheck(t *testing.T) {
 		"1 hits with empty client_ip",
 		"1 hits with status outside 100-599",
 		"1 dns_queries with uppercase or trailing-dot domain",
-		"1 counters higher than the hits recorded for their site",
 		"1 hits timestamped before 2000",
 		"1 dns_queries timestamped in the future",
 		"1 dns_queries with invalid client_ip",

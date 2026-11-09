@@ -20,21 +20,20 @@ Errors are a plain-text body: 400 = bad parameter, 404 = no such thing,
 PUBLIC
 ======
 
-GET /counter.svg?site=NAME[&noinc=1]
-  Counts one visit for NAME and returns the counter image (image/svg+xml).
-  noinc=1: return the image without counting.
-  Each IP counts 30 times a minute (-counter-limit). Past that, the image
-  still shows but the count doesn't go up.
-  400 if site is missing or invalid.
+GET /counter.svg?site=NAME
+  The visitor counter image (image/svg+xml). It only reads: the number is
+  computed from recorded hits, one per client IP per UTC day that loaded a
+  page of NAME (a GET answered 2xx or 304 for "/", "*/", "*.html" or a path
+  with no extension). Assets, errors, POSTs and the counter image itself
+  don't count, and a visit recorded twice (by Caddy's log and by
+  middleware, say) is still one visitor. Put it on a page with
+    <img src="/counter.svg?site=NAME" alt="visitor counter">
+  and proxy /counter.* to this listener (deploy/Caddyfile.example).
+  The number is reused for -counter-ttl (default 1m) before it's recomputed.
+  404 unless NAME is in -counter-sites.
 
-GET /counter.txt?site=NAME[&noinc=1]
-  Same as counter.svg (it counts too, unless noinc=1), but returns the
-  number as text/plain.
-
-GET /counter.js
-  Script that puts the counter image where its tag is:
-    <script src="https://HOST/counter.js" data-site="NAME"></script>
-  data-site defaults to the page's hostname.
+GET /counter.txt?site=NAME
+  The same number as text/plain.
 
 POST /ingest
   Where Go apps send hits (middleware.NewRemoteSink does this for you).
@@ -58,7 +57,6 @@ POST /ingest
       "forwarded_for": "...",
       "id":         "...",                   optional dedup key; a repeated id
                                              is a duplicate, not a new hit
-      "count":      true                     also add 1 to the site's counter
     }]}
   Answers:
     200  {"accepted": N, "duplicates": M}
@@ -77,7 +75,7 @@ ADMIN
 =====
 
 GET /api/health
-  The counter and /ingest breakers, and the data sanity checks (cached 10
+  The /ingest breaker, and the data sanity checks (cached 10
   minutes: they scan whole tables). The syslog breakers live in the
   dnscount syslog process and are logged there.
   {"breakers": [{"name","trips","suppressed","tripped_now","keys"}],

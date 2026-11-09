@@ -78,7 +78,7 @@ func asnTable(t *testing.T, rows string) *enrich.ASNTable {
 func TestReadOnlyNeverWrites(t *testing.T) {
 	x := openExplorer(t)
 	addHits(t, x.primary, "203.0.113.9", "jf.example", now)
-	if _, err := x.ro.DB().Exec(`INSERT INTO counters (site, count) VALUES ('x', 1)`); err == nil {
+	if _, err := x.ro.DB().Exec(`INSERT INTO hits (ts, site, source, client_ip, line_hash) VALUES ('t', 'x', 'x', '10.0.0.1', 'ro')`); err == nil {
 		t.Fatal("wrote to the primary through the read-only handle")
 	}
 	if _, err := x.ro.DB().Exec(`INSERT INTO enrich.cursors (tbl, last_id) VALUES ('x', 1)`); err == nil {

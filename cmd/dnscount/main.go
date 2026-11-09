@@ -84,8 +84,19 @@ func serve(args []string) error {
 	adminAddr := fs.String("admin-addr", "127.0.0.1:8081", "health endpoint listen address (breaker stats); keep it on localhost")
 	token := fs.String("token", os.Getenv("DNSCOUNT_TOKEN"), "bearer token for /ingest (or $DNSCOUNT_TOKEN); empty disables /ingest")
 	trusted := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For is believed")
-	counterLimit := fs.Int("counter-limit", 30, "counter increments per IP per minute")
+	counterSites := fs.String("counter-sites", "", "comma-separated sites /counter.svg and /counter.txt answer for (visitors computed from hits); empty disables them")
+	counterTTL := fs.Duration("counter-ttl", time.Minute, "how long a site's counter is reused before it's recomputed")
 	fs.Parse(args)
+	var sites []string
+	for _, s := range strings.Split(*counterSites, ",") {
+		if s = strings.TrimSpace(s); s == "" {
+			continue
+		}
+		if !hit.ValidSite(s) {
+			return fmt.Errorf("-counter-sites: %q is not [A-Za-z0-9._-]{1,64}", s)
+		}
+		sites = append(sites, s)
+	}
 
 	proxies, err := hit.ParsePrefixes(*trusted)
 	if err != nil {
@@ -95,7 +106,7 @@ func serve(args []string) error {
 		log.Printf("warning: admin listener on %s has no auth and isn't on localhost", *adminAddr)
 	}
 	if *token == "" {
-		log.Printf("no -token: /ingest will reject everything (counter still works)")
+		log.Printf("no -token: /ingest will reject everything (the counter still works)")
 	}
 	st, err := store.Open(*db)
 	if err != nil {
@@ -105,12 +116,11 @@ func serve(args []string) error {
 	rec := forensics.New(st, os.Stderr)
 	defer rec.Close()
 	srv := server.New(server.Config{
-		Store: st, Token: *token, TrustedProxies: proxies, CounterPerMinute: *counterLimit,
+		Store: st, Token: *token, TrustedProxies: proxies, CounterSites: sites, CounterTTL: *counterTTL,
 		OnTrip: rec.OnTrip, OnEnd: rec.OnEnd,
 	})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go srv.Counter.Run(ctx)
 	go srv.Ingest.Run(ctx)
 	return runHTTP(ctx,
 		&http.Server{Addr: *addr, Handler: srv.Public(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second},
@@ -200,7 +210,6 @@ func ingestAccess(args []string) error {
 	db := dbFlag(fs)
 	format := fs.String("format", "combined", "combined (nginx/apache) | caddy")
 	site := fs.String("site", "", "site name to record hits under (caddy defaults to the request host)")
-	count := fs.Bool("count", false, "also bump the site's public counter for each new hit")
 	follow := fs.Bool("follow", false, "keep reading as the file grows (like tail -f)")
 	fs.Parse(args)
 	if *site != "" && !hit.ValidSite(*site) {
@@ -215,11 +224,7 @@ func ingestAccess(args []string) error {
 	default:
 		return fmt.Errorf("unknown -format %q", *format)
 	}
-	return runIngest(*db, p, fs.Args(), *follow, func(r *ingest.Record) {
-		if r.Hit != nil {
-			r.Hit.Count = *count
-		}
-	})
+	return runIngest(*db, p, fs.Args(), *follow, nil)
 }
 
 func ingestDNS(args []string) error {

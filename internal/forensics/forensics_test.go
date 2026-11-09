@@ -22,7 +22,7 @@ func tripRegex(t *testing.T) *regexp.Regexp {
 	if m == nil {
 		t.Fatal("tripRegex not found in nix/guard.nix")
 	}
-	re := strings.Replace(string(m[1]), `${concatStringsSep "|" cfg.tripBreakers}`, "counter|ingest", 1)
+	re := strings.Replace(string(m[1]), `${concatStringsSep "|" cfg.tripBreakers}`, "ingest|syslog", 1)
 	re = strings.Replace(re, "<HOST>", `(\S+)`, 1)
 	return regexp.MustCompile(re)
 }
@@ -33,10 +33,10 @@ func TestTripLineMatchesJail(t *testing.T) {
 		trip guard.Trip
 		ban  string // "" means no ban
 	}{
-		{guard.Trip{Breaker: "counter", Key: "203.0.113.7", Reason: "rate"}, "203.0.113.7"},
+		{guard.Trip{Breaker: "ingest", Key: "203.0.113.7", Reason: "rate"}, "203.0.113.7"},
 		{guard.Trip{Breaker: "ingest", Key: "2001:db8::7", Reason: "bad_token"}, "2001:db8::7"},
 		{guard.Trip{Breaker: "syslog-not-allowed", Key: "203.0.113.8", Reason: "not_allowed"}, ""}, // not a default
-		{guard.Trip{Breaker: "counter", Key: guard.Global, Reason: "map_full"}, ""},                // never ban everyone
+		{guard.Trip{Breaker: "ingest", Key: guard.Global, Reason: "map_full"}, ""},                 // never ban everyone
 	} {
 		line, ok := TripLine(c.trip)
 		got := ""

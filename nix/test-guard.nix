@@ -23,9 +23,11 @@ in
     services.dnscount = {
       enable = true;
       caddyLog.enable = true;
-      # Reachable directly, with a counter limit low enough to trip in a test.
+      # Reachable directly so the attacker can trip the ingest breaker. The
+      # counter is for the Caddy site below (its log names it by the host).
       serve.addr = "0.0.0.0:8080";
-      serve.extraArgs = [ "-counter-limit" "3" ];
+      serve.extraArgs = [ "-counter-ttl" "1s" ];
+      counterSites = [ server ];
       # Bans are read back through the explorer's API. No internet: no feeds.
       explore = {
         enable = true;
@@ -62,6 +64,11 @@ in
     client.wait_until_succeeds("curl -fsS --max-time 5 http://${server}/ok", timeout=60)
     attacker.succeed("curl -fsS --max-time 5 http://${server}/ok")
 
+    with subtest("the counter counts page loads from Caddy's log, once per visitor"):
+        for _ in range(3):
+            client.succeed("curl -fsS --max-time 5 -o /dev/null http://${server}/ok")
+        server.wait_until_succeeds("curl -fsS 'http://127.0.0.1:8080/counter.txt?site=${server}' | grep -x 2", timeout=30)
+
     def unban(jail):
         server.succeed(f"fail2ban-client set {jail} unbanip ${attacker}")
         attacker.wait_until_succeeds("curl -fsS --max-time 5 http://${server}/ok", timeout=30)
@@ -94,9 +101,10 @@ in
         unban("caddy-401")
 
     with subtest("tripping a dnscount breaker gets banned"):
-        for i in range(6):
-            attacker.succeed("curl -sS --max-time 5 -o /dev/null http://${server}:8080/counter.txt?site=test")
-        server.wait_until_succeeds("journalctl -u dnscount-serve.service | grep -q 'breaker trip: breaker=counter ip=${attacker}'", timeout=30)
+        # No token: each POST is a bad request, and 10 a minute trips it.
+        for i in range(12):
+            attacker.succeed("curl -sS --max-time 5 -o /dev/null -X POST -d '{}' http://${server}:8080/ingest")
+        server.wait_until_succeeds("journalctl -u dnscount-serve.service | grep -q 'breaker trip: breaker=ingest ip=${attacker}'", timeout=30)
         server.wait_until_succeeds("fail2ban-client status dnscount-trip | grep -q '${attacker}'", timeout=60)
         attacker.fail("curl -sS --max-time 5 http://${server}/ok")
         unban("dnscount-trip")

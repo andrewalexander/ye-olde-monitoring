@@ -80,15 +80,20 @@ alias dnscount='sudo -u dnscount env DNSCOUNT_DB=/var/lib/dnscount/dnscount.db d
 
 ```sh
 make up        # or: docker compose up --build -d, or: tilt up
-make smoke     # counter, Caddy log tailing, middleware -> /ingest, breaker trip, sanity check
+make smoke     # counter from Caddy's log, Caddy log tailing, middleware -> /ingest, breaker trip, sanity check
 make down      # stop and delete the local data
 ```
 
-http://localhost:8000 is a retro test page behind Caddy. It has the counter, links that make hits, a button that floods `/ingest` with garbage, and a live table of recent hits. http://localhost:8001 is `examples/app`, which ships hits through the Go middleware. Run reports with `docker compose exec dnscount dnscount report hits -top ip`.
+http://localhost:8000 is a retro test page behind Caddy. It has the counter, links that make hits, a button that floods `/ingest` with garbage, and a live table of recent hits. http://localhost:8001 is `examples/app`, which ships hits through the Go middleware. http://localhost:8002 is `examples/caddy-site`, static files behind Caddy. Run reports with `docker compose exec dnscount dnscount report hits -top ip`.
 
 ## What it records
 
 ### Requests
+
+There are two ways to wire up a site, and a site should use one of them:
+
+- **Behind Caddy** (static files, or `reverse_proxy` to any app): Caddy's access log already records every request, so do nothing in the app. `examples/caddy-site` is this pattern. The fail2ban guard reads the same log, so its jails cover the site too.
+- **Not behind Caddy** (a Go app on its own port): wrap the handler with `middleware`, as `examples/app` does.
 
 **From Caddy** (or any access log like Apache or nginx using `combined`):
 
@@ -155,7 +160,7 @@ ssh <router> cat /var/log/ulog/threat.log | dnscount ingest-dns -format unifi - 
 | `caddy-probe` | 2 requests in an hour for paths no real client asks for (`.env`, `.git`, `.php`, `wp-`, `aws.json`, `*.log`, traversal… see `guard.probePaths`) | 1 day |
 | `caddy-404` | 20 other 404s in 10 minutes, outside the path prefixes in `guard.notFoundIgnore` | 1 hour |
 | `caddy-401` | 20 401s in 10 minutes (token guessing; an app's own log often has no address for these) | 1 hour |
-| `dnscount-trip` | one trip of a breaker in `guard.tripBreakers` (default: counter, ingest) | 1 hour |
+| `dnscount-trip` | one trip of a breaker in `guard.tripBreakers` (default: ingest) | 1 hour |
 | `guard.extraJails` | your app's own, such as a failed-login jail | yours |
 
 Each new ban of the same IP lasts twice as long as the last, up to a week, across all jails. `guard.exempt` networks are never banned (like LAN addresses). 
@@ -174,11 +179,16 @@ Where Jellyfin runs, `dnscount-jellyfin-auth` follows its journal and records ea
 
 ### Counter
 
-- `GET /counter.svg?site=blog` counts one visit and returns the image; `&noinc=1` returns it without counting.
-- `GET /counter.txt?site=blog` returns the plain number.
-- `GET /counter.js` inserts the image where its `<script data-site=...>` tag sits.
+```html
+<img src="/counter.svg?site=example.com" alt="visitor counter">
+```
 
-Each IP gets 30 counts per minute (`-counter-limit`). Requests over the limit still get the image but aren't counted.
+The counter writes nothing. Its number is computed from the hits above: **one visitor per client IP per UTC day that loaded a page** (a `GET` answered 2xx or 304 for `/`, `*/`, `*.html`, or a path with no extension). Reloads, assets, 404s, scanners' POSTs and the counter image itself don't raise it, and a visit recorded by two sources still counts once. So there's nothing to rate-limit, and it can always be recomputed.
+
+- `GET /counter.svg?site=NAME` is the image. `GET /counter.txt?site=NAME` is the plain number.
+- Only sites in `serve -counter-sites` (NixOS: `services.dnscount.counterSites`) answer. Any other name gets 404.
+- Each site's number is cached for `-counter-ttl` (default 1m).
+- Behind Caddy, proxy `/counter.*` to `dnscount serve` (`deploy/Caddyfile.example`). The site is named after the request host, so redirect `www.` to the apex or it counts separately.
 
 ## Reporting and Exploring 
 
@@ -278,7 +288,7 @@ The explorer reads the live database. In WAL mode, readers never block writers, 
 Depending on the component, different auth and limits apply. a circuit breaker trip leads to a ban
 | Endpoint | Auth | Limits |
 |---|---|---|
-| counter | none | 30/min per IP |
+| counter | none; read-only, sites in `-counter-sites` only | cached per site (`-counter-ttl`) |
 | `POST /ingest` | `Authorization: Bearer <token>` (`-token` or `$DNSCOUNT_TOKEN`) | 1 MB body, 1000 hits/batch, 600 req/min, 10 bad/min per IP |
 | admin listener (`/api/health`) | none; it only listens on localhost | none |
 | explorer | none; keep it LAN-only (Caddy) | per-request query deadline |

@@ -80,62 +80,88 @@ func (e *env) count(t *testing.T, q string, args ...any) int {
 	return n
 }
 
-func TestCounterCountsMatchHits(t *testing.T) {
-	e := setup(t, server.Config{CounterPerMinute: 1000})
-	const n = 50
-	var wg sync.WaitGroup
-	for i := range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if w := e.do("GET", "/counter.svg?site=a", fmt.Sprintf("10.0.0.%d", i%5+1), "", nil); w.Code != 200 {
-				t.Errorf("status %d", w.Code)
-			}
-		}()
-	}
-	wg.Wait()
-	c, _ := e.st.Counter("a")
-	hits := e.count(t, `SELECT count(*) FROM hits WHERE site = 'a' AND source = 'counter'`)
-	if c != n || hits != n {
-		t.Errorf("counter = %d, hits = %d, want both %d", c, hits, n)
-	}
+// page is a hit the visitor counter sees: a caddy GET of path.
+func page(site, ip, path string, status int, ts time.Time) hit.Hit {
+	return hit.Hit{Hash: hit.NewID(), TS: ts, Site: site, Source: "caddy", ClientIP: ip,
+		Method: "GET", Path: path, Status: status}
+}
 
-	w := e.do("GET", "/counter.txt?site=a&noinc=1", "10.0.0.1", "", nil)
-	if strings.TrimSpace(w.Body.String()) != fmt.Sprint(n) {
-		t.Errorf("noinc txt = %q", w.Body.String())
+func (e *env) counter(t *testing.T, site string) string {
+	t.Helper()
+	w := e.do("GET", "/counter.txt?site="+site, "203.0.113.9", "", nil)
+	if w.Code != 200 {
+		t.Fatalf("counter.txt?site=%s: %d", site, w.Code)
 	}
-	if c, _ := e.st.Counter("a"); c != n {
-		t.Errorf("noinc changed the counter to %d", c)
+	return strings.TrimSpace(w.Body.String())
+}
+
+// The counter is one per IP per UTC day that loaded a page, whatever
+// recorded it, and the counter endpoints never write anything.
+func TestCounterIsVisitorsFromHits(t *testing.T) {
+	e := setup(t, server.Config{CounterSites: []string{"a", "b"}})
+	day := e.clock.Now()
+	ins := func(hs ...hit.Hit) {
+		t.Helper()
+		if _, err := e.st.InsertHits(hs); err != nil {
+			t.Fatal(err)
+		}
 	}
-	e.do("GET", "/counter.svg?site=b", "10.0.0.1", "", nil)
-	if c, _ := e.st.Counter("b"); c != 1 {
-		t.Errorf("site b = %d, want 1", c)
+	ins(
+		page("a", "10.0.0.1", "/", 200, day),
+		page("a", "10.0.0.1", "/", 200, day.Add(time.Minute)),        // reload: same visitor
+		page("a", "10.0.0.1", "/about", 304, day.Add(2*time.Minute)), // another page, same day
+		page("a", "10.0.0.1", "/", 200, day.Add(24*time.Hour)),       // next day: counts again
+		page("a", "10.0.0.2", "/posts/", 200, day),
+		page("a", "10.0.0.3", "/x.html", 200, day),
+		page("a", "10.0.0.4", "/style.css", 200, day),    // asset
+		page("a", "10.0.0.5", "/wp-login.php", 404, day), // probe
+		page("a", "10.0.0.6", "/counter.svg", 200, day),  // the counter itself
+		page("b", "10.0.0.7", "/", 200, day),
+	)
+	post := page("a", "10.0.0.8", "/", 200, day)
+	post.Method = "POST"
+	mw := page("a", "10.0.0.1", "/", 200, day) // the same visit, also sent by middleware
+	mw.Source = "middleware"
+	ins(post, mw)
+
+	before := e.count(t, `SELECT count(*) FROM hits`)
+	if got := e.counter(t, "a"); got != "4" {
+		t.Errorf("a = %s, want 4 (10.0.0.1 twice, .2, .3)", got)
 	}
-	if c, _ := e.st.Counter("a"); c != n {
-		t.Errorf("site b bumped site a to %d", c)
+	if got := e.counter(t, "b"); got != "1" {
+		t.Errorf("b = %s, want 1", got)
 	}
-	svg := e.do("GET", "/counter.svg?site=a&noinc=1", "10.0.0.1", "", nil)
-	if ct := svg.Header().Get("Content-Type"); ct != "image/svg+xml" || !strings.Contains(svg.Body.String(), "<svg") {
-		t.Errorf("svg response: %s %q", ct, svg.Body.String()[:40])
+	svg := e.do("GET", "/counter.svg?site=a", "10.0.0.1", "", nil)
+	if ct := svg.Header().Get("Content-Type"); ct != "image/svg+xml" || !strings.Contains(svg.Body.String(), `aria-label="4 visitors"`) {
+		t.Errorf("svg response: %s %q", ct, svg.Body.String())
+	}
+	if after := e.count(t, `SELECT count(*) FROM hits`); after != before {
+		t.Errorf("counter requests wrote %d hits", after-before)
 	}
 }
 
-func TestCounterRateLimit(t *testing.T) {
-	e := setup(t, server.Config{CounterPerMinute: 5})
-	for range 20 {
-		if w := e.do("GET", "/counter.svg?site=a", "203.0.113.5", "", nil); w.Code != 200 {
-			t.Fatalf("over-limit request got %d; should still get the image", w.Code)
+func TestCounterAllowlistAndCache(t *testing.T) {
+	e := setup(t, server.Config{CounterSites: []string{"a"}, CounterTTL: time.Minute})
+	for _, site := range []string{"other", "../etc", ""} {
+		if w := e.do("GET", "/counter.svg?site="+site, "10.0.0.1", "", nil); w.Code != 404 {
+			t.Errorf("site %q: %d, want 404", site, w.Code)
 		}
 	}
-	if c, _ := e.st.Counter("a"); c != 5 {
-		t.Errorf("one IP pumped the counter to %d, want 5", c)
+	if got := e.counter(t, "a"); got != "0" {
+		t.Fatalf("empty = %s", got)
 	}
-	e.do("GET", "/counter.svg?site=a", "198.51.100.1", "", nil)
-	if c, _ := e.st.Counter("a"); c != 6 {
-		t.Errorf("other IP blocked: counter %d, want 6", c)
+	e.st.InsertHits([]hit.Hit{page("a", "10.0.0.1", "/", 200, e.clock.Now())})
+	if got := e.counter(t, "a"); got != "0" {
+		t.Errorf("within the TTL = %s, want the cached 0", got)
 	}
-	if w := e.do("GET", "/counter.svg?site=../etc", "198.51.100.1", "", nil); w.Code != 400 {
-		t.Errorf("bad site got %d", w.Code)
+	e.clock.Add(time.Minute)
+	if got := e.counter(t, "a"); got != "1" {
+		t.Errorf("after the TTL = %s, want 1", got)
+	}
+	// Nothing configured: the counter is off.
+	off := setup(t, server.Config{})
+	if w := off.do("GET", "/counter.txt?site=a", "10.0.0.1", "", nil); w.Code != 404 {
+		t.Errorf("no CounterSites: %d, want 404", w.Code)
 	}
 }
 
@@ -146,7 +172,7 @@ func batchJSON(hits ...hit.Hit) string {
 
 func goodHit(id string, ts time.Time) hit.Hit {
 	return hit.Hit{Hash: id, TS: ts, Site: "blog", Source: "middleware", ClientIP: "203.0.113.50",
-		Method: "GET", Path: "/", Status: 200, Count: true}
+		Method: "GET", Path: "/", Status: 200}
 }
 
 var auth = map[string]string{"Authorization": "Bearer sekrit", "Content-Type": "application/json"}
@@ -165,8 +191,8 @@ func TestIngestStatuses(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"duplicates": 2`) {
 		t.Errorf("retry: %s", w.Body)
 	}
-	if c, _ := e.st.Counter("blog"); c != 2 {
-		t.Errorf("counter after retry = %d, want 2", c)
+	if n := e.count(t, `SELECT count(*) FROM hits WHERE site = 'blog'`); n != 2 {
+		t.Errorf("hits after retry = %d, want 2", n)
 	}
 
 	cases := []struct {
@@ -373,7 +399,7 @@ func TestAPIDoc(t *testing.T) {
 			t.Fatalf("%s: %d %s", url, w.Code, w.Header().Get("Content-Type"))
 		}
 		for _, route := range []string{
-			"/counter.svg", "/counter.txt", "/counter.js", "POST /ingest", "/api/health",
+			"/counter.svg", "/counter.txt", "POST /ingest", "/api/health",
 		} {
 			if !strings.Contains(w.Body.String(), route) {
 				t.Errorf("%s doesn't document %s", url, route)

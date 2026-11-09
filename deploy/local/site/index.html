@@ -54,38 +54,38 @@
 <h2>1. The counter</h2>
 <div class="box center">
   <p>You are visitor number</p>
-  <!-- The real thing: counts this page load once per load (30/min per IP). -->
-  <script src="/counter.js" data-site="local-test"></script>
-  <p class="muted">&lt;script src="/counter.js" data-site="local-test"&gt;&lt;/script&gt;</p>
+  <img id="counter" alt="visitor counter" src="/counter.svg?site=localhost">
+  <p class="muted">&lt;img src="/counter.svg?site=localhost"&gt;</p>
 </div>
 <div class="box">
-  <p><b>How it works:</b> that one script tag is all a site needs. <code>counter.js</code> adds an
-     <code>&lt;img src="/counter.svg?site=local-test"&gt;</code> where the tag sits. Each load of that image
-     adds 1 to the <code>local-test</code> counter and stores a hit with source <code>counter</code>.</p>
-  <p><b>Limits:</b> each IP gets 30 counts a minute. Past that the image still shows, but the number stops going up,
-     so holding down reload won't inflate it. <code>site</code> must match <code>[A-Za-z0-9._-]</code>, up to 64 characters.</p>
+  <p><b>How it works:</b> the image only <i>reads</i>. Loading this page put a line in Caddy's access log,
+     the tailer turned that line into a hit, and the counter is <b>one visitor per client IP per UTC day</b>
+     that loaded a page of the site (a <code>GET</code> with status 2xx or 304 for <code>/</code>,
+     <code>*/</code>, <code>*.html</code> or a path with no extension). Assets, 404s, POSTs and the counter
+     image itself don't count, and it doesn't matter which source recorded the visit or whether two did.</p>
+  <p><b>Which sites:</b> only those in <code>serve -counter-sites</code> (here <code>localhost,caddy-site,example</code>).
+     Any other <code>site=</code> gets a 404. The number is cached for <code>-counter-ttl</code> (2s here, 1m by default).
+     Reloading won't change it, because you're already today's visitor from your IP.</p>
 </div>
 
-<h2>2. Reading it without counting</h2>
+<h2>2. The same number as text</h2>
 <div class="box">
-  <p>Image with <code>&amp;noinc=1</code>: <img id="noinc" alt="counter (not counted)" src="/counter.svg?site=local-test&amp;noinc=1"></p>
-  <p>Plain number from <code>/counter.txt?site=local-test&amp;noinc=1</code>: <b id="txt">…</b>
-     <button id="refresh">refresh</button></p>
-  <p class="note">Add <code>noinc=1</code> to show the number somewhere without counting a visit. Without it,
-     <code>counter.txt</code> counts too, the same as the image. Pressing refresh should leave the number unchanged.</p>
+  <p><code>/counter.txt?site=localhost</code>: <b id="txt">…</b> <button id="refresh">refresh</button></p>
+  <p class="note">Compare <a href="http://localhost:8002/">examples/caddy-site</a> on port 8002: static files only,
+     the way a real static site is built. Its log lines are renamed <code>caddy-site</code>, so it has its own counter.</p>
 </div>
 
 <h2>3. Make some hits</h2>
 <div class="box">
   <p class="note">Each link below shows up in the table in section 4. The <i>source</i> column says which path recorded it.</p>
   <ul>
-    <li><a href="/">reload this page</a>: the counter goes up by 1 (source <code>counter</code>). Caddy also logs the page,
-        <code>counter.js</code> and <code>counter.svg</code> requests (source <code>caddy</code>).</li>
+    <li><a href="/">reload this page</a>: Caddy logs the page and the <code>counter.svg</code> request (source
+        <code>caddy</code>). The counter stays the same, because you've already been counted today.</li>
     <li><a href="/no-such-page">a 404</a>: Caddy logs it with status 404. That's how you'd spot scanners probing for
         <code>/wp-login.php</code> and similar paths.</li>
     <li><a href="/?utm_source=test&amp;q=hello">a page with a query string</a>: the query is stored separately from the path.</li>
-    <li><a href="/counter.svg?site=another-site">count a different site</a>: each <code>site</code> has its own counter.
-        Compare <code>report hits -top site</code>.</li>
+    <li><a href="/counter.svg?site=another-site">a site not in -counter-sites</a>: 404. Compare
+        <code>report hits -top site</code>.</li>
     <li><a href="http://localhost:8001/">the example Go app</a> (port 8001): it doesn't go through Caddy.
         <code>middleware.Wrap</code> records each request and posts it in batches to <code>/ingest</code> with a
         bearer token (source <code>middleware</code>, site <code>example</code>).</li>
@@ -109,8 +109,7 @@
   </div>
   <dl class="note">
     <dt><b>source</b></dt>
-    <dd><code>counter</code>: counted by <code>dnscount serve</code>.
-        <code>caddy</code>: read from Caddy's JSON access log.
+    <dd><code>caddy</code>: read from Caddy's JSON access log.
         <code>middleware</code>: sent by a Go app.</dd>
     <dt><b>site</b></dt>
     <dd>The counter's <code>site=</code> value, the middleware's <code>Options.Site</code>, or for Caddy the request
@@ -145,9 +144,9 @@ make down                                          # stop and wipe the local dat
 const EXPLORE = "http://localhost:8090";
 
 async function refreshTxt() {
-  const r = await fetch("/counter.txt?site=local-test&noinc=1", { cache: "no-store" });
+  const r = await fetch("/counter.txt?site=localhost", { cache: "no-store" });
   document.getElementById("txt").textContent = (await r.text()).trim();
-  document.getElementById("noinc").src = "/counter.svg?site=local-test&noinc=1&t=" + Date.now();
+  document.getElementById("counter").src = "/counter.svg?site=localhost&t=" + Date.now();
 }
 
 function cell(tr, text) {

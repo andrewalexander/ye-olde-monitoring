@@ -73,7 +73,7 @@ sleep 1
 if systemctl is-active --quiet dnscount-serve.service; then
 	echo
 	echo "dnscount-serve is running. Quick checks on this host:"
-	echo "  curl -s 'http://127.0.0.1:8080/counter.txt?site=test'"
+	echo "  curl -s 'http://127.0.0.1:8080/counter.txt?site=<a site in -counter-sites>'"
 	echo "  curl -s http://127.0.0.1:8081/api/health      # breaker stats"
 	echo "  curl -s http://127.0.0.1:8090/api            # the explorer's API (LAN UI: deploy/Caddyfile.example)"
 	echo "  sudo -u dnscount env DNSCOUNT_DB=/var/lib/dnscount/dnscount.db dnscount report hits -top ip"

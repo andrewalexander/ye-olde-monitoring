@@ -104,6 +104,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
+	if _, err := db.Exec(`DROP TABLE IF EXISTS counters`); err != nil { // the old write-side counter
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	if err := dropColumns(db, droppedColumns); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
@@ -120,12 +124,8 @@ const insertHit = `INSERT OR IGNORE INTO hits
 	(ts, site, source, client_ip, forwarded_for, method, host, path, query, status, bytes, user_agent, referer, line_hash)
 	VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
-const bumpCounter = `INSERT INTO counters(site, count) VALUES (?, 1)
-	ON CONFLICT(site) DO UPDATE SET count = count + 1`
-
-// InsertHits stores hits in one transaction, all or nothing. Hits with Count
-// set bump their site's counter, but only if the hit wasn't a duplicate.
-// It returns how many were new.
+// InsertHits stores hits in one transaction, all or nothing, and returns how
+// many were new.
 func (s *Store) InsertHits(hits []hit.Hit) (int, error) {
 	tx, err := s.db.BeginTx(s.c(), nil)
 	if err != nil {
@@ -141,23 +141,27 @@ func (s *Store) InsertHits(hits []hit.Hit) (int, error) {
 		}
 		if c, _ := res.RowsAffected(); c == 1 {
 			n++
-			if h.Count {
-				if _, err := tx.Exec(bumpCounter, h.Site); err != nil {
-					return 0, err
-				}
-			}
 		}
 	}
 	return n, tx.Commit()
 }
 
-// Counter returns the public counter for site.
-func (s *Store) Counter(site string) (int64, error) {
+// visitorsQuery is the visitor counter: one per client IP per UTC day that
+// loaded a page of site. A page is a successful (2xx, or 304 from a cached
+// reload) GET of "/", a path ending in "/" or ".html", or a path with no dot
+// after its last slash. Assets, errors, probes and the counter image itself
+// don't count, and it doesn't matter which source (Caddy's log, middleware,
+// an imported log) recorded the hit or whether two of them did.
+const visitorsQuery = `SELECT count(*) FROM (
+	SELECT DISTINCT client_ip, substr(ts, 1, 10) FROM hits
+	WHERE site = ? AND method = 'GET' AND (status BETWEEN 200 AND 299 OR status = 304)
+	  AND (path GLOB '*/' OR path GLOB '*.html' OR path NOT GLOB '*/*.*'))`
+
+// Visitors returns the visitor counter for site (see visitorsQuery). It's
+// computed from hits, so it can always be recomputed and is never written.
+func (s *Store) Visitors(site string) (int64, error) {
 	var n int64
-	err := s.queryRow(`SELECT count FROM counters WHERE site = ?`, site).Scan(&n)
-	if err == sql.ErrNoRows {
-		return 0, nil
-	}
+	err := s.queryRow(visitorsQuery, site).Scan(&n)
 	return n, err
 }
 
@@ -182,15 +186,9 @@ func (s *Store) InsertRecords(recs []ingest.Record) (int, error) {
 	for _, r := range recs {
 		if h := r.Hit; h != nil {
 			h.Sanitize()
-			before := n
 			if err := exec(insertHit, fmtTime(h.TS), h.Site, h.Source, h.ClientIP, h.ForwardedFor,
 				h.Method, h.Host, h.Path, h.Query, h.Status, h.Bytes, h.UserAgent, h.Referer, h.Hash); err != nil {
 				return 0, err
-			}
-			if h.Count && n > before {
-				if _, err := tx.Exec(bumpCounter, h.Site); err != nil {
-					return 0, err
-				}
 			}
 		}
 		if q := r.Query; q != nil {

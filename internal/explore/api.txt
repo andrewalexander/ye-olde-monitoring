@@ -48,7 +48,8 @@ Records
   query and referer: values of credential-looking parameters (api_key,
   ApiKey, token, access_token, X-Emby-Token, ...) are stored as REDACTED.
   source is one of:
-    counter     counted by the counter endpoints
+    counter     counted by the old write-side counter (before it was
+                computed from hits); no new rows
     middleware  sent to /ingest by a Go app
     caddy       read from a Caddy JSON access log
     access-log  read from an nginx/apache access log
@@ -76,7 +77,7 @@ Records
   re-applied the ban after a restart (it was unbanned in the same jail
   within 30s before): the ban before it continuing, not a new one.
 
-/api/trips?[ip=][&breaker=counter|ingest|syslog|syslog-not-allowed][&since=][&limit=]
+/api/trips?[ip=][&breaker=ingest|syslog|syslog-not-allowed][&since=][&limit=]
   Circuit-breaker trips, newest first (without the detail blob).
   [{"id","tripped_at","cooldown_until","ended_at","breaker","key","reason",
     "window_events","window_bad","suppressed_during_cooldown",

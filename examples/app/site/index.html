@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>example app</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body id="top">
+
+<header>
+  <h1>Example App</h1>
+  <p>a Go app with no Caddy in front</p>
+  <marquee scrollamount="5">*** every request recorded by middleware.Wrap ***</marquee>
+</header>
+
+<main>
+<section>
+  <h2>How it works</h2>
+  <article>
+    <p>Nothing logs this app's requests for it, so <code>middleware.Wrap</code> records
+       each one and sends them in batches to <code>POST /ingest</code> with a bearer token
+       (<code>source=middleware</code>, <code>site=example</code>). Use this pattern only
+       for a site that's <i>not</i> behind Caddy. Behind Caddy, the access log already
+       has every request (see <code>examples/caddy-site</code>).</p>
+    <p>The counter below comes from the same hits as everything else: one visitor per IP
+       per day that loaded a page.</p>
+  </article>
+</section>
+</main>
+
+<footer>
+  <p>You are visitor number<br>
+    <img src="{{.Counter}}" alt="visitor counter" width="110" height="28"></p>
+  <small>Best viewed in Netscape Navigator 4.0 at 800x600</small>
+</footer>
+
+</body>
+</html>

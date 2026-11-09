@@ -19,14 +19,9 @@ CREATE TABLE IF NOT EXISTS hits (
 	referer       TEXT    NOT NULL DEFAULT '',
 	line_hash     TEXT    NOT NULL UNIQUE
 );
-CREATE INDEX IF NOT EXISTS hits_site ON hits(site);
+CREATE INDEX IF NOT EXISTS hits_site ON hits(site);  -- also serves the visitor counter
 CREATE INDEX IF NOT EXISTS hits_client_ip ON hits(client_ip);
 CREATE INDEX IF NOT EXISTS hits_ts ON hits(ts);
-
-CREATE TABLE IF NOT EXISTS counters (
-	site  TEXT PRIMARY KEY,
-	count INTEGER NOT NULL DEFAULT 0
-);
 
 -- Lookups: who asked for what.
 CREATE TABLE IF NOT EXISTS dns_queries (

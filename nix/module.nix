@@ -91,6 +91,18 @@ in
       '';
     };
 
+    counterSites = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "example.com" ];
+      description = ''
+        Sites whose visitor counter `/counter.svg?site=NAME` serves. The
+        number is computed from recorded hits (one per IP per day that loaded
+        a page), so a site behind Caddy needs `caddyLog` and its vhost's
+        `logFormat`. Sites not listed get 404.
+      '';
+    };
+
     trustedProxies = mkOption {
       type = types.listOf types.str;
       default = [ "127.0.0.1/32" "::1/128" ];
@@ -114,7 +126,7 @@ in
       extraArgs = mkOption {
         type = types.listOf types.str;
         default = [ ];
-        example = [ "-counter-limit" "60" ];
+        example = [ "-counter-ttl" "10s" ];
         description = "Extra flags for `dnscount serve`.";
       };
     };
@@ -341,6 +353,8 @@ in
           "-addr" cfg.serve.addr
           "-admin-addr" cfg.serve.adminAddr
           "-trusted-proxies" (concatStringsSep "," cfg.trustedProxies)
+        ] ++ lib.optionals (cfg.counterSites != [ ]) [
+          "-counter-sites" (lib.escapeShellArg (concatStringsSep "," cfg.counterSites))
         ] ++ map lib.escapeShellArg cfg.serve.extraArgs);
         EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
         Restart = "on-failure";
