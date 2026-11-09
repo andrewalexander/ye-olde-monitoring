@@ -49,6 +49,10 @@
 		}
 	}
 
+	# Local previews swap which folder this serves (CADDY_SITE_DIR), so make
+	# browsers recheck every time instead of showing a cached copy.
+	header Cache-Control no-cache
+
 	handle /counter.* {
 		reverse_proxy dnscount:8080
 	}
