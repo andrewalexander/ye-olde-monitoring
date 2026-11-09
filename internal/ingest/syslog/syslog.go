@@ -191,6 +191,9 @@ func (l *Listener) HandleLine(src netip.AddrPort, transport, line string) {
 		l.count(func(s *Stats) { s.Bad++ })
 		l.Sources.Bad(key, "malformed", ev(err.Error()))
 	default:
+		if line, ok := IDSBlockLine(rec.Alert); ok {
+			l.cfg.Log.Print(line)
+		}
 		l.mu.Lock()
 		rec.SetHash(l.dedup.Key(line))
 		l.batch = append(l.batch, rec)
@@ -366,4 +369,23 @@ func (l *Listener) serveTCP(ln net.Listener) error {
 			}
 		}()
 	}
+}
+
+// IDSBlockLine is the line fail2ban's dnscount-ids jail matches (idsRegex
+// in nix/guard.nix): the router's IPS blocked traffic from a public address
+// coming in. The IPS only stopped that connection; the ban stops the
+// address's next ones at this host. LAN and outgoing alerts get no line.
+func IDSBlockLine(a *ingest.IDSAlert) (string, bool) {
+	if a == nil || a.Action != "blocked" || a.Direction == "outgoing" {
+		return "", false
+	}
+	ip, err := netip.ParseAddr(a.SrcIP)
+	if err != nil {
+		return "", false
+	}
+	ip = ip.Unmap()
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return "", false
+	}
+	return fmt.Sprintf("ids block: ip=%s sid=%d signature=%q", ip, a.SignatureID, a.Signature), true
 }

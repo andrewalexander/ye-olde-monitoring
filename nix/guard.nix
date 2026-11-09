@@ -27,6 +27,10 @@ let
   # reads this line, so keep it on one line).
   tripRegex = ''breaker trip: breaker=(?:${concatStringsSep "|" cfg.tripBreakers}) ip=<HOST> reason='';
 
+  # dnscount syslog logs this when the router's IPS blocks a public address
+  # coming in (syslog.IDSBlockLine; a Go test reads this line too).
+  idsRegex = ''ids block: ip=<HOST> sid='';
+
   caddyJail = { failregex, maxretry, findtime, bantime }: {
     filter.Definition = {
       inherit failregex;
@@ -76,7 +80,8 @@ in
       enable = mkEnableOption ''
         fail2ban jails over Caddy's access log: paths no real client asks for
         (`caddy-probe-certain`, `caddy-probe`), and bursts of 404s (`caddy-404`) or 401s (`caddy-401`); and over dnscount's
-        journal: any address that trips a breaker (`dnscount-trip`). Repeat offenders get
+        journal: any address that trips a breaker (`dnscount-trip`) or that the
+        router's IPS blocks (`dnscount-ids`). Repeat offenders get
         longer bans, across all jails. With an HTTP-proxy VPS in front, the
         firewall here only sees the VPS, so a ban would block everyone: ban on
         the VPS instead'';
@@ -166,6 +171,17 @@ in
           dnscount's journal). ingest is what the public reaches (the counter
           only reads, so it has no breaker); syslog and syslog-not-allowed
           only ever see the LAN.
+        '';
+      };
+
+      banIDSBlocks = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Ban an address for a day when the router's IPS blocks traffic from
+          it (`dnscount-ids` jail, from dnscount-syslog's journal). The IPS
+          stops only the connection it matched; the ban stops the address's
+          next ones here. Needs `syslog.enable` and the router's CEF events.
         '';
       };
 
@@ -269,6 +285,20 @@ in
             maxretry = 1;
             findtime = "10m";
             bantime = "1h";
+          };
+        };
+      } // lib.optionalAttrs cfg.banIDSBlocks {
+        # The IPS only blocks a connection it recognises; the same scanner
+        # tries again, often with something it doesn't. One block is a ban.
+        dnscount-ids = {
+          filter.Definition.failregex = idsRegex;
+          settings = {
+            backend = "systemd";
+            journalmatch = "_SYSTEMD_UNIT=dnscount-syslog.service";
+            port = cfg.ports;
+            maxretry = 1;
+            findtime = "10m";
+            bantime = "1d";
           };
         };
       } // cfg.extraJails;

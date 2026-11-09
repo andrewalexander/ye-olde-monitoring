@@ -153,7 +153,7 @@ ssh <router> cat /var/log/ulog/threat.log | dnscount ingest-dns -format unifi - 
 
 ### Bans (the guard)
 
-`services.dnscount.guard` runs fail2ban, banning IPs based on rules from Caddy's JSON access log or dnscount's journal for breaker trips. Each Caddy line's `client_ip` is the real visitor. Only the path is matched, so a search term can't trip a jail when a user is using the website normally.
+`services.dnscount.guard` runs fail2ban, banning IPs based on rules from Caddy's JSON access log, or dnscount's journal for breaker trips and the router's IPS blocks. Each Caddy line's `client_ip` is the real visitor. Only the path is matched, so a search term can't trip a jail when a user is using the website normally.
 
 | Jail | Trigger | Ban |
 |---|---|---|
@@ -162,6 +162,7 @@ ssh <router> cat /var/log/ulog/threat.log | dnscount ingest-dns -format unifi - 
 | `caddy-404` | 20 other 404s in 10 minutes, outside the path prefixes in `guard.notFoundIgnore` | 1 hour |
 | `caddy-401` | 20 401s in 10 minutes (token guessing; an app's own log often has no address for these) | 1 hour |
 | `dnscount-trip` | one trip of a breaker in `guard.tripBreakers` (default: ingest) | 1 hour |
+| `dnscount-ids` | 1 inbound connection the router's IPS blocked (from its CEF events via `dnscount syslog`; off with `guard.banIDSBlocks = false`). The IPS stops only the connection it recognised; the ban stops the address's next ones here | 1 day |
 | `guard.extraJails` | your app's own, such as a failed-login jail | yours |
 
 Each new ban of the same IP lasts twice as long as the last, up to a week, across all jails. `guard.exempt` networks are never banned (like LAN addresses). 

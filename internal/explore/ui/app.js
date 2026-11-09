@@ -214,6 +214,20 @@ function defensesCol() {
     headerTooltip: "What we did about it in this window: IDS/IPS blocks, fail2ban bans, breaker trips, refused logins and firewall drops. \u26a0 marks a ban that leaked or an IDS alert let through. Filter by kind: ids, ban, trip, login, fw, leak, allowed. Open the address for its events, or see everyone's on Defenses.",
   });
 }
+// A router firewall line's action, as logged, with what it means on hover.
+// UniFi's RET ("return") is easy to misread: the rule let it through.
+const FW_ACTION_HELP = {
+  return: "UniFi RET: the rule let it through (on WAN_IN, usually a port forward). Not return traffic.",
+  accept: "Accepted by the rule.",
+  drop: "Dropped: no reply sent.",
+  reject: "Rejected: refused with a reply (this host's rejects are for a banned address).",
+};
+function fwActionCol() {
+  return col("Action", "action", "text", {
+    formatter: (c) => { const v = c.getValue() || ""; return el("span", { text: v, title: FW_ACTION_HELP[v] || "" }); },
+    headerTooltip: "What the firewall did: return (UniFi RET) = let through, accept = allowed, drop = no reply, reject = refused. Hover a value for more.",
+  });
+}
 function hitsCol() {
   return col("Hits", "hits", "num", {
     formatter: (c) => {
@@ -613,7 +627,7 @@ async function renderIP(ip) {
   table(main, p.auth_failures, [col("When", "ts", "time"), col("App", "source"), col("Name tried", "user")]);
   main.append(el("h2", { text: "Logged connections (router firewall, and this host's while banned)" }));
   table(main, p.connections, [col("From", "client_ip", "ip"), col("To", "dst_ip", "ip"), col("Port", "dst_port", "num"), col("Proto", "proto"),
-    col("Rule", "rule"), col("Action", "action"), col("Count", "count", "num"), col("First", "first", "time"), col("Last", "last", "time")]);
+    col("Rule", "rule"), fwActionCol(), col("Count", "count", "num"), col("First", "first", "time"), col("Last", "last", "time")]);
   if ((p.sightings || []).length) sightingsTable(main, p.sightings);
   if ((p.asn_changes || []).length) {
     main.append(el("h2", { text: "AS changes" }));
@@ -645,7 +659,7 @@ async function renderDomain(d) {
 
 function connColumns() {
   return [col("Client", "client_ip", "client"), col("To", "dst_ip", "ip"), col("Port", "dst_port", "num"), col("Proto", "proto"),
-    col("Action", "action"), col("Count", "count", "num"), col("First", "first", "time"), col("Last", "last", "time")];
+    fwActionCol(), col("Count", "count", "num"), col("First", "first", "time"), col("Last", "last", "time")];
 }
 
 // What's known about the LAN device at an address, and how it was seen.
