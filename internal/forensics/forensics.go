@@ -12,9 +12,11 @@ import (
 	"log"
 	"net"
 	"net/netip"
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/andrewalexander/ye-olde-monitoring/hit"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/guard"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/store"
 )
@@ -121,11 +123,14 @@ func (r *Recorder) loop() {
 
 // Detail is what goes in breaker_trips.detail_json.
 type Detail struct {
-	Trigger     any               `json:"trigger,omitempty"`
-	Samples     []guard.Sample    `json:"samples"`
-	RateCurve   []int             `json:"rate_curve"`
-	ReverseDNS  []string          `json:"reverse_dns,omitempty"`
-	History     *store.IPHistory  `json:"history,omitempty"`
+	Trigger    any              `json:"trigger,omitempty"`
+	Samples    []guard.Sample   `json:"samples"`
+	RateCurve  []int            `json:"rate_curve"`
+	ReverseDNS []string         `json:"reverse_dns,omitempty"`
+	History    *store.IPHistory `json:"history,omitempty"`
+	// RecentHits is the key's last requests to our sites before the trip,
+	// oldest first, whatever the breaker was counting.
+	RecentHits  []hit.Hit         `json:"recent_hits,omitempty"`
 	LateSamples []guard.Sample    `json:"late_samples,omitempty"`
 	Notes       map[string]string `json:"notes,omitempty"`
 }
@@ -142,10 +147,16 @@ func (r *Recorder) record(k string, t guard.Trip) {
 			}
 			d.ReverseDNS = names
 		}
-		if h, err := r.st.IPHistory(t.Key); err == nil {
+		if h, err := r.st.IPHistoryAt(t.Key, t.TrippedAt); err == nil {
 			d.History = &h
 		} else {
 			d.Notes["history"] = err.Error()
+		}
+		if hits, err := r.st.Hits(store.HitFilter{IP: t.Key, Until: t.TrippedAt.Add(time.Second), Limit: banSamples}); err == nil {
+			slices.Reverse(hits)
+			d.RecentHits = hits
+		} else {
+			d.Notes["recent_hits"] = err.Error()
 		}
 	}
 	if len(d.Notes) == 0 {

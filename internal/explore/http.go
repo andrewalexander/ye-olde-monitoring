@@ -47,6 +47,14 @@ func (x *Explorer) Handler() http.Handler {
 		bans, err := st.Bans(p.BanFilter(), x.cfg.Now())
 		return withIntel(st, bans, err, func(b store.Ban) string { return b.IP })
 	})
+	routes["GET /api/defenses"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
+		f := store.DefenseFilter{Since: p.SinceOr("7d"), IP: p.Str("ip"), Limit: p.Int("limit")}
+		if k := p.Str("kind"); k != "" {
+			f.Kinds = strings.Split(k, ",")
+		}
+		events, err := st.Defenses(f, x.cfg.Now())
+		return withIntel(st, events, err, func(e store.DefenseEvent) string { return e.IP })
+	})
 	routes["GET /api/hits"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
 		hits, err := st.Hits(p.HitFilter())
 		return withIntel(st, hits, err, func(h hit.Hit) string { return h.ClientIP })

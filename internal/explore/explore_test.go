@@ -81,13 +81,13 @@ func TestExplorerEndToEnd(t *testing.T) {
 
 	for _, path := range []string{"/api/ips", "/api/domains", "/api/clients", "/api/flagged", "/api/overview",
 		"/api/health", "/api/health/series", "/api/ip/203.0.113.66", "/api/domain/evil.example.org", "/api/hits",
-		"/api/alerts", "/api/bans", "/api/trips", "/api", "/api/flagged?verdict=reserved", "/api/flagged?verdict=malicious,reserved"} {
+		"/api/alerts", "/api/bans", "/api/trips", "/api", "/api/defenses", "/api/defenses?kind=all", "/api/defenses?kind=ban,trip", "/api/flagged?verdict=reserved", "/api/flagged?verdict=malicious,reserved"} {
 		if resp, body := get(t, h, path); resp.StatusCode != 200 {
 			t.Errorf("%s = %d: %s", path, resp.StatusCode, body)
 		}
 	}
 	for _, path := range []string{"/api/ips?since=nope", "/api/ips?order=sideways", "/api/flagged?verdict=evil",
-		"/api/ip/not-an-ip", "/api/hits?limit=x"} {
+		"/api/ip/not-an-ip", "/api/hits?limit=x", "/api/defenses?kind=nope"} {
 		if resp, _ := get(t, h, path); resp.StatusCode != 400 {
 			t.Errorf("%s = %d, want 400", path, resp.StatusCode)
 		}

@@ -16,7 +16,8 @@ let
   # once Caddy is the only proxy) before request.uri, and status after the
   # request. Only the path is matched, not the query string, so a search term
   # can't trip a jail.
-  probeRegex = ''"client_ip":"<HOST>",.*?"uri":"(?i:[^"?]*(?:${concatStringsSep "|" cfg.probePaths}))'';
+  pathRegex = paths: ''"uri":"(?i:[^"?]*(?:${concatStringsSep "|" paths}))'';
+  probeRegex = paths: ''"client_ip":"<HOST>",.*?${pathRegex paths}'';
   notFoundSkip = lib.optionalString (cfg.notFoundIgnore != [ ])
     "(?!/(?i:${concatStringsSep "|" cfg.notFoundIgnore})/)";
   notFoundRegex = ''"client_ip":"<HOST>",.*?"uri":"${notFoundSkip}[^"]*",.*"status":404\b'';
@@ -74,7 +75,7 @@ in
     guard = {
       enable = mkEnableOption ''
         fail2ban jails over Caddy's access log: paths no real client asks for
-        (`caddy-probe`), and bursts of 404s (`caddy-404`) or 401s (`caddy-401`); and over dnscount's
+        (`caddy-probe-certain`, `caddy-probe`), and bursts of 404s (`caddy-404`) or 401s (`caddy-401`); and over dnscount's
         journal: any address that trips a breaker (`dnscount-trip`). Repeat offenders get
         longer bans, across all jails. With an HTTP-proxy VPS in front, the
         firewall here only sees the VPS, so a ban would block everyone: ban on
@@ -101,25 +102,46 @@ in
         description = "Networks never banned, so a mistyped password at home can't lock you out.";
       };
 
-      probePaths = mkOption {
+      probePathsCertain = mkOption {
         type = types.listOf types.str;
         description = ''
-          Regex alternatives for paths no legitimate client asks for. Two hits
-          in an hour is a day's ban. fail2ban's config parser reads % as
-          interpolation, so write %% for one %.
+          Regex alternatives for paths no legitimate client ever asks for,
+          not even once: one hit is a day's ban (`caddy-probe-certain`).
+          fail2ban's config parser reads % as interpolation, so write %% for
+          one %.
         '';
         default = [
-          # dot-directories (.env, .git, .aws)
+          # dot-directories and dotfiles (.env, .git, .aws, .ssh)
           ''/\.(?!well-known/)''
-          # server-side scripts and config files
-          ''\.(?:php\d?|phtml|cgi|pl|aspx?|axd|jsp|action|env|ini|ya?ml|toml|tfstate|tfvars|hcl|sql|bak|old|sh|py|rb|cfg|conf|properties|secret|key|md|log|dist)(?=[/"?]|$)''
+          # secrets by extension
+          ''\.(?:env|pem|key|enc)(?=[/"?]|$)''
           # cloud and app credential files (not config.json: Jellyfin's web client loads one)
-          ''/(?:aws|appsettings[^/"?]*|credentials|secrets?)\.json''
-          # admin panels and framework debug endpoints
-          ''wp-|phpmyadmin|phpinfo|cgi-bin|webmin|actuator|_profiler|server-status|telescope|@vite|/vendor/''
+          ''/(?:aws|appsettings[^/"?]*|credentials|secrets?|service-account)\.json''
+          # admin panels and exploit endpoints
+          ''wp-|phpmyadmin|phpinfo|cgi-bin|_vti_|_ignition''
           # path traversal
           ''%%2e|%%5c|\.\.''
           ''/(?:etc|proc|root|var/task)/''
+        ];
+      };
+
+      probePaths = mkOption {
+        type = types.listOf types.str;
+        description = ''
+          Regex alternatives for paths no legitimate client asks for, but
+          that are less certain than `probePathsCertain`. Two hits in a day
+          is a day's ban (`caddy-probe`). fail2ban's config parser reads % as
+          interpolation, so write %% for one %.
+        '';
+        default = [
+          # server-side scripts and config files
+          ''\.(?:php\d?|phtml|cgi|pl|aspx?|axd|jsp|action|ini|ya?ml|toml|tfstate|tfvars|hcl|sql|bak|old|sh|py|rb|cfg|conf|properties|secret|md|log|dist)(?=[/"?]|$)''
+          # framework debug endpoints and PHP dependencies
+          ''webmin|actuator|_profiler|server-status|telescope|@vite|/vendor/(?:phpunit|composer|autoload)''
+          # backups, lockfiles and manifests
+          ''backup\.(?:zip|tar|tgz|gz|rar|7z)''
+          ''/(?:package-lock|composer)\.json|(?:yarn|bun|Gemfile|Pipfile|composer)\.lock|/go\.sum|requirements\.txt''
+          ''/config\.xml|/node_modules/''
         ];
       };
 
@@ -164,8 +186,36 @@ in
   };
 
   config = mkIf cfg.enable {
+    # The stock iptables-multiport action, except a banned address's packets
+    # also get a kernel log line ("f2b-<jail>: ... SRC=... DPT=...") before
+    # they're rejected, so dnscount-banned-traffic can record who keeps
+    # knocking. Rate-limited per source address (not one bucket for
+    # everyone, like iptables-multiport-log), so one flood can't hide the
+    # rest; past the limit a packet is still rejected, just not logged.
+    environment.etc."fail2ban/action.d/dnscount-iptables-log.conf".text = ''
+      [INCLUDES]
+      before = iptables.conf
+
+      [Definition]
+      type = multiport
+      actionstart = <known/actionstart>
+                    { <iptables> -N f2b-<name>-log 2>/dev/null; <iptables> -F f2b-<name>-log; }
+                    <iptables> -A f2b-<name>-log -m hashlimit --hashlimit-upto <loglimit> --hashlimit-burst <logburst> --hashlimit-mode srcip --hashlimit-name f2b-log -j LOG --log-level info --log-prefix "$(expr 'f2b-<name>' : '\(.\{1,26\}\)'): "
+                    <iptables> -A f2b-<name>-log -j <blocktype>
+      actionstop = <known/actionstop>
+                   <iptables> -F f2b-<name>-log
+                   <iptables> -X f2b-<name>-log
+      actionban = <iptables> -I f2b-<name> 1 -s <ip> -j f2b-<name>-log
+      actionunban = <iptables> -D f2b-<name> -s <ip> -j f2b-<name>-log
+
+      [Init]
+      loglimit = 12/min
+      logburst = 12
+    '';
+
     services.fail2ban = {
       enable = true;
+      banaction = "dnscount-iptables-log";
       ignoreIP = cfg.exempt;
       # Each new ban of the same IP lasts twice as long as the last, up to a
       # week, whichever jail it lands in.
@@ -179,12 +229,20 @@ in
       # start over at the base ban each time.
       daemonSettings.Definition.dbpurgeage = "30d";
       jails = {
-        caddy-probe = caddyJail {
-          failregex = probeRegex;
-          maxretry = 2;
+        caddy-probe-certain = caddyJail {
+          failregex = probeRegex cfg.probePathsCertain;
+          maxretry = 1;
           findtime = "1h";
           bantime = "1d";
         };
+        # A day's window: scanners often come back hours later. A path the
+        # jail above already bans for isn't counted twice.
+        caddy-probe = lib.recursiveUpdate (caddyJail {
+          failregex = probeRegex cfg.probePaths;
+          maxretry = 2;
+          findtime = "1d";
+          bantime = "1d";
+        }) { filter.Definition.ignoreregex = pathRegex cfg.probePathsCertain; };
         # The looser of the two signals, so a shorter ban.
         caddy-404 = caddyJail {
           failregex = notFoundRegex;

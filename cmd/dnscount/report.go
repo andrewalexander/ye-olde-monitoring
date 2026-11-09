@@ -19,7 +19,8 @@ const reportUsage = `usage:
   dnscount report hits  [-top|-bottom|-new ip|path|ua|site|host|status|method|referer[,...]] [-site s] [-ip x] [-status 404|4xx] [-since 24h] [-limit n]
   dnscount report dns   -domain example.com | -client 192.168.1.5 | -top|-bottom|-new domain|client[,...]  [-since 7d]
   dnscount report alerts [-top signature|src|dst|category|action|direction|policy|dst_name] [-ip x] [-action allowed|blocked] [-since 24h]
-  dnscount report bans  [-ip x] [-jail name] [-since 7d]
+  dnscount report bans  [-ip x] [-jail name] [-since 7d] [-ignored]
+  dnscount report ban   <id>
   dnscount report flagged [-since 30d] [-verdict malicious,suspicious|all] [-enrich-db explore.db]
   dnscount report trips [-since 24h] [-ip x] [-breaker name]
   dnscount report trip  <id>
@@ -181,13 +182,21 @@ func report(args []string) error {
 	case "bans":
 		ip := fs.String("ip", "", "only bans of this IP")
 		jail := fs.String("jail", "", "only this fail2ban jail")
+		ignored := fs.Bool("ignored", false, "list what fail2ban would have banned in an exempt network instead")
 		run = func(st *store.Store, since time.Time) error {
-			bans, err := st.Bans(store.BanFilter{Since: since, IP: *ip, Jail: *jail, Limit: *limit}, time.Now())
+			bans, err := st.Bans(store.BanFilter{Since: since, IP: *ip, Jail: *jail, Limit: *limit, Ignored: *ignored}, time.Now())
 			if err != nil {
 				return err
 			}
 			w := table()
-			fmt.Fprintln(w, "BANNED\tJAIL\tIP\tFAILURES\tFOR\tUNBANNED\tHITS 24H BEFORE\tHITS DURING")
+			if *ignored {
+				fmt.Fprintln(w, "ID\tWOULD HAVE BANNED\tJAIL\tIP\tMATCHES\tHITS 24H BEFORE")
+				for _, b := range bans {
+					fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%d\t%d\n", b.ID, localTime(b.BannedAt), b.Jail, b.IP, b.Failures, b.HitsBefore)
+				}
+				return w.Flush()
+			}
+			fmt.Fprintln(w, "ID\tBANNED\tJAIL\tIP\tFAILURES\tFOR\tUNBANNED\tHITS 24H BEFORE\tHITS DURING")
 			leaks := 0
 			for _, b := range bans {
 				unbanned := "still banned"
@@ -199,7 +208,7 @@ func report(args []string) error {
 					during += "  LEAK"
 					leaks++
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%d\t%s\n", localTime(b.BannedAt), b.Jail, b.IP, b.Failures,
+				fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%d\t%s\n", b.ID, localTime(b.BannedAt), b.Jail, b.IP, b.Failures,
 					banLength(b.BanTime), unbanned, b.HitsBefore, during)
 			}
 			if err := w.Flush(); err != nil {
@@ -273,6 +282,38 @@ func report(args []string) error {
 					t.Reason, t.WindowEvents, t.WindowBad, t.Suppressed, ended)
 			}
 			return w.Flush()
+		}
+	case "ban":
+		if len(args) < 2 {
+			return fmt.Errorf("report ban <id>")
+		}
+		id, err := strconv.ParseInt(args[1], 10, 64)
+		if err != nil {
+			return fmt.Errorf("ban id: %w", err)
+		}
+		args = args[1:] // let flags follow the id
+		run = func(st *store.Store, _ time.Time) error {
+			b, err := st.Ban(id, time.Now())
+			if err != nil {
+				return fmt.Errorf("ban %d: %w", id, err)
+			}
+			detail := b.Detail
+			b.Detail = nil
+			head, _ := json.MarshalIndent(b, "", "  ")
+			fmt.Printf("ban:\n%s\n", head)
+			var pretty bytes.Buffer
+			if json.Indent(&pretty, detail, "", "  ") == nil {
+				fmt.Printf("detail at the time of the ban:\n%s\n", pretty.Bytes())
+			} else {
+				fmt.Println("no detail recorded yet: dnscount-fail2ban records it shortly after the ban")
+			}
+			h, err := st.IPHistory(b.IP)
+			if err != nil {
+				return err
+			}
+			now, _ := json.MarshalIndent(h, "", "  ")
+			fmt.Printf("what we know about %s now:\n%s\n", b.IP, now)
+			return nil
 		}
 	case "trip":
 		if len(args) < 2 {

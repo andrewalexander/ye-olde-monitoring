@@ -78,6 +78,17 @@ func ReadRoutes(rc RouteConfig) map[string]http.HandlerFunc {
 		"GET /api/bans": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
 			return st.Bans(p.BanFilter(), rc.Now())
 		}),
+		"GET /api/bans/{id}": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
+			id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+			if err != nil {
+				return nil, ErrBadParam("id must be a number")
+			}
+			b, err := st.Ban(id, rc.Now())
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, ErrNotFound
+			}
+			return b, err
+		}),
 		"GET /api/trips": rc.Handle(func(st *store.Store, r *http.Request, p *Params) (any, error) {
 			return st.Trips(p.TripFilter())
 		}),
@@ -167,7 +178,9 @@ func (p *Params) AlertFilter() store.AlertFilter {
 }
 
 func (p *Params) BanFilter() store.BanFilter {
-	return store.BanFilter{Since: p.Since(), IP: p.Str("ip"), Jail: p.Str("jail"), Limit: p.Int("limit")}
+	ignored := p.Str("ignored")
+	return store.BanFilter{Since: p.Since(), IP: p.Str("ip"), Jail: p.Str("jail"), Limit: p.Int("limit"),
+		Ignored: ignored == "1" || ignored == "true"}
 }
 
 // Handle turns f into an http.HandlerFunc: parameters, a per-request

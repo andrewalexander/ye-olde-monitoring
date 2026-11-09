@@ -58,7 +58,8 @@ type Defenses struct {
 	Bans   int64 `json:"bans"`   // fail2ban, not counting restores across restarts
 	Trips  int64 `json:"trips"`  // a circuit breaker tripped on it
 	Logins int64 `json:"logins"` // an app refused its login
-	// Firewall counts the router's firewall dropping or rejecting it.
+	// Firewall counts the router's firewall dropping or rejecting it, and this
+	// host rejecting it while banned (rule f2b-<jail>, source host-fw).
 	Firewall int64 `json:"firewall"`
 	// Warnings: a defense that didn't hold, or a detection nothing acted on.
 	Leaks         int64 `json:"leaks,omitempty"`          // bans that hits got through
@@ -284,15 +285,10 @@ func (s *Store) inboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 		return rows.Err()
 	}
 	if q.Drops {
-		// The explorer opens the database read-only, so the index comes from
-		// the writer's schema: until that restarts on a new version, say so
+		// Until the writer restarts on a version with the index, say so
 		// rather than fail with "no such index".
-		var n int
-		if err := s.queryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'connections_dropped'`).Scan(&n); err != nil {
+		if err := s.needDroppedIndex(); err != nil {
 			return nil, err
-		}
-		if n == 0 {
-			return nil, BadQueryError("listing firewall-only addresses needs the connections_dropped index, which dnscount syslog creates when it next starts")
 		}
 		if err := drops(s.query(inboundDrops, since)); err != nil {
 			return nil, err
@@ -1019,6 +1015,13 @@ func (s *Store) IPProfile(ip string, since, now time.Time) (IPProfile, error) {
 	if p.Bans, err = s.Bans(BanFilter{IP: ip, Since: since, Limit: 50}, now); err != nil {
 		return p, err
 	}
+	// What fail2ban would have banned, had it not been exempt (Ban.Ignored).
+	ignored, err := s.Bans(BanFilter{IP: ip, Since: since, Limit: 50, Ignored: true}, now)
+	if err != nil {
+		return p, err
+	}
+	p.Bans = append(p.Bans, ignored...)
+	slices.SortStableFunc(p.Bans, func(a, b Ban) int { return b.BannedAt.Compare(a.BannedAt) })
 	if p.Alerts, err = s.Alerts(AlertFilter{IP: ip, Since: since, Limit: 50}); err != nil {
 		return p, err
 	}

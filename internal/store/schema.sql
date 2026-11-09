@@ -140,6 +140,20 @@ CREATE TABLE IF NOT EXISTS bans (
 	line_hash TEXT    NOT NULL UNIQUE
 );
 CREATE INDEX IF NOT EXISTS bans_ip ON bans(ip, jail, ts);
+
+-- What was known about an address when fail2ban banned it (or would have,
+-- for an exempt address), like breaker_trips.detail_json for a trip. The
+-- stub row (found_json: fail2ban's matched-line times) is written with the
+-- ban; dnscount ingest-bans fills detail_json once the access log has caught
+-- up, and adds "during" (what it kept sending) after the unban.
+CREATE TABLE IF NOT EXISTS ban_forensics (
+	ban_id      INTEGER PRIMARY KEY, -- bans.id of the ban or ignored row
+	found_json  TEXT    NOT NULL DEFAULT '[]',
+	detail_json TEXT    NOT NULL DEFAULT '', -- '' until recorded
+	recorded_at TEXT    NOT NULL DEFAULT '',
+	backfilled  INTEGER NOT NULL DEFAULT 0,  -- recorded long after the ban, from stored rows
+	during_done INTEGER NOT NULL DEFAULT 0
+);
 CREATE INDEX IF NOT EXISTS bans_ts ON bans(ts);
 
 -- Logins an app refused, from the app's own log (Jellyfin's "Authentication

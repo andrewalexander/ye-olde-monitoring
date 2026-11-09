@@ -1,6 +1,8 @@
 package store
 
 import (
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net"
 	"slices"
@@ -27,8 +29,8 @@ func banArgs(b *ingest.Ban) []any {
 // InsertBan records one ban or unban that didn't come from a log (tests,
 // tools). Bans from fail2ban's log go through InsertRecords.
 func (s *Store) InsertBan(b ingest.Ban) error {
-	if b.Event != "ban" && b.Event != "unban" {
-		return fmt.Errorf("event must be ban or unban, not %q", b.Event)
+	if b.Event != "ban" && b.Event != "unban" && b.Event != "ignored" {
+		return fmt.Errorf("event must be ban, unban or ignored, not %q", b.Event)
 	}
 	if net.ParseIP(b.IP) == nil {
 		return fmt.Errorf("not an IP address: %q", b.IP)
@@ -36,7 +38,13 @@ func (s *Store) InsertBan(b ingest.Ban) error {
 	if b.Hash == "" {
 		b.Hash = hit.NewID()
 	}
-	_, err := s.exec(insertBan, banArgs(&b)...)
+	if _, err := s.exec(insertBan, banArgs(&b)...); err != nil {
+		return err
+	}
+	if b.Event == "unban" {
+		return nil
+	}
+	_, err := s.exec(insertBanFound, foundJSON(b.Found), b.Hash)
 	return err
 }
 
@@ -59,6 +67,12 @@ type Ban struct {
 	// shows as an unban of the same IP and jail just before (shutdown lifts
 	// every ban), so it's the same ban continuing, not a new one.
 	Restored bool `json:"restored,omitempty"`
+	// Ignored: fail2ban would have banned it, but it's in an exempt
+	// network. Nothing was blocked, so it has no unban and no leaks.
+	Ignored bool `json:"ignored,omitempty"`
+	// Detail is everything recorded about the address at the ban (see
+	// forensics.BanDetail); only Ban(id) fills it.
+	Detail json.RawMessage `json:"detail,omitempty"`
 }
 
 // RestoreGap is how soon after an unban a ban of the same IP and jail is taken
@@ -74,7 +88,11 @@ const BanGrace = 5 * time.Second
 type BanFilter struct {
 	Since    time.Time
 	IP, Jail string
-	Limit    int
+	ID       int64
+	// Ignored lists what fail2ban would have banned in an exempt network
+	// instead of real bans.
+	Ignored bool
+	Limit   int
 }
 
 // Bans lists bans newest first, each with its unban and the hits around it.
@@ -82,14 +100,19 @@ func (s *Store) Bans(f BanFilter, now time.Time) ([]Ban, error) {
 	if f.Limit <= 0 {
 		f.Limit = 100
 	}
+	event := "ban"
+	if f.Ignored {
+		event = "ignored"
+	}
 	rows, err := s.query(`SELECT b.id, b.ts, b.jail, b.ip, b.ports, b.bantime_s, b.failures,
 		coalesce((SELECT min(u.ts) FROM bans u WHERE u.event = 'unban' AND u.ip = b.ip AND u.jail = b.jail
 			AND u.ts >= b.ts AND u.id > b.id), ''),
 		coalesce((SELECT max(u.ts) FROM bans u WHERE u.event = 'unban' AND u.ip = b.ip AND u.jail = b.jail
 			AND u.ts <= b.ts AND u.id < b.id), '')
-		FROM bans b WHERE b.event = 'ban' AND b.ts >= ? AND (? = '' OR b.ip = ?) AND (? = '' OR b.jail = ?)
+		FROM bans b WHERE b.event = ? AND b.ts >= ? AND (? = '' OR b.ip = ?) AND (? = '' OR b.jail = ?)
+			AND (? = 0 OR b.id = ?)
 		ORDER BY b.ts DESC, b.id DESC LIMIT ?`,
-		fmtTime(f.Since), f.IP, f.IP, f.Jail, f.Jail, f.Limit)
+		event, fmtTime(f.Since), f.IP, f.IP, f.Jail, f.Jail, f.ID, f.ID, f.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +126,10 @@ func (s *Store) Bans(f BanFilter, now time.Time) ([]Ban, error) {
 			return nil, err
 		}
 		b.BannedAt, b.UnbannedAt, b.BanTime = parseTime(ts), parseTime(unban), time.Duration(secs)*time.Second
-		if prevUnban != "" && b.BannedAt.Sub(parseTime(prevUnban)) <= RestoreGap {
+		if f.Ignored {
+			// An unban found above belongs to some other, real ban.
+			b.Ignored, b.UnbannedAt = true, time.Time{}
+		} else if prevUnban != "" && b.BannedAt.Sub(parseTime(prevUnban)) <= RestoreGap {
 			b.Restored = true
 		}
 		out = append(out, b)
@@ -124,6 +150,9 @@ func (s *Store) banHits(b *Ban, now time.Time) error {
 	if err := s.queryRow(`SELECT count(*) FROM hits WHERE client_ip = ? AND ts >= ? AND ts < ?`,
 		b.IP, fmtTime(b.BannedAt.Add(-24*time.Hour)), fmtTime(b.BannedAt)).Scan(&b.HitsBefore); err != nil {
 		return err
+	}
+	if b.Ignored {
+		return nil // nothing was blocked, so nothing could leak
 	}
 	end := b.UnbannedAt
 	if end.IsZero() {
@@ -241,4 +270,20 @@ func (s *Store) BanCounts(ips []string, since time.Time) (map[string]int64, erro
 		}
 	}
 	return out, nil
+}
+
+// Ban is one ban or ignored event, with its forensics detail.
+func (s *Store) Ban(id int64, now time.Time) (Ban, error) {
+	for _, ignored := range []bool{false, true} {
+		bans, err := s.Bans(BanFilter{ID: id, Ignored: ignored, Limit: 1}, now)
+		if err != nil {
+			return Ban{}, err
+		}
+		if len(bans) == 1 {
+			b := bans[0]
+			b.Detail, err = s.BanDetail(id)
+			return b, err
+		}
+	}
+	return Ban{}, sql.ErrNoRows
 }

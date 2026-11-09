@@ -54,6 +54,25 @@ Records
     caddy       read from a Caddy JSON access log
     access-log  read from an nginx/apache access log
 
+/api/defenses?[kind=ids,allowed,ban,trip,login,fw|all][&ip=][&since=7d][&limit=100]
+  Everything done about an address, one timeline, newest first (the
+  explorer's Defenses page). Explorer only.
+  [{"ts","kind","warn","ip","to","port","what","id"}, plus what's known
+    about ip]
+  kind: ids (IDS/IPS alert), ban (fail2ban, restores included and said so in
+  what; exempt "ignored" events aren't), trip (circuit breaker), login
+  (refused by an app), fw (router firewall drop or reject, or this host
+  rejecting a banned address).
+  warn: leak (a ban that hits got through) or allowed (an IDS alert let
+  through; kind=allowed selects just those).
+  ip: the address acted on (an alert's source). to/port: where it was going.
+  what: one line about it. id: the ban's or trip's, for /api/bans/{id} and
+  /api/trips/{id}.
+  With no kind=, every kind except fw: firewall drops run to tens of
+  thousands a day and would fill the page. kind=all adds them. Listing fw
+  without ip= needs the connections_dropped index (400 until dnscount
+  syslog restarts and creates it).
+
 /api/alerts?[ip=][&action=allowed|blocked][&by=signature|src|dst|category|action][&since=][&limit=]
   The router's IDS/IPS alerts, newest first. ip= matches either end.
   [{"id","ts","src_ip","src_port","dst_ip","dst_port","proto","action",
@@ -66,16 +85,34 @@ Records
   src_hits: requests that source made to our sites over the same period.
   With by=, counts instead: [{"key","count","first"}].
 
-/api/bans?[ip=][&jail=][&since=][&limit=]
+/api/bans?[ip=][&jail=][&ignored=1][&since=][&limit=]
   fail2ban bans, newest first, each paired with the unban that ended it.
   [{"id","banned_at","unbanned_at","jail","ip","ports","bantime_ns","failures",
-    "hits_24h_before","hits_during","restored"}]
+    "hits_24h_before","hits_during","restored","ignored"}]
+  ignored=1 lists what fail2ban would have banned in an exempt network
+  instead (its maxretry of matches within findtime): "ignored": true, no
+  unban, hits_during 0. They're never counted as bans.
   hits_during: requests from that IP that reached a site on a port the ban
   covers while it was in force (after a 5s grace for requests already in
   flight). Anything above 0 means the block leaked.
   ports: the jail's ports (empty = all). restored: true when fail2ban
   re-applied the ban after a restart (it was unbanned in the same jail
   within 30s before): the ban before it continuing, not a new one.
+
+/api/bans/{id}
+  One ban (or ignored event), plus "detail": what was recorded about the
+  address at the ban, the counterpart of a trip's. {"event","jail",
+  "maxretry","findtime_s","found" (when fail2ban matched each line),
+  "trigger": {"hits","logins"} (those lines as stored), "samples" (its last
+  20 requests up to the ban, oldest first), "rate_curve" (requests per
+  tenth of findtime before it), "history" (what we knew of it then),
+  "restored_of" (a restore's original ban), "backfilled" (recorded later
+  from stored rows), "during": {"until","blocked","ports","late_samples",
+  "router_seen","leaked"} (after the unban: packets this host logged
+  rejecting, at most 12 a minute, per port, the first few, the router's
+  lines from it, and requests that got through), "notes"}. No reverse DNS.
+  detail is absent until it's recorded (about 15s after the ban).
+  404 if there's no such ban.
 
 /api/trips?[ip=][&breaker=ingest|syslog|syslog-not-allowed][&since=][&limit=]
   Circuit-breaker trips, newest first (without the detail blob).
@@ -90,8 +127,8 @@ Records
   One trip, plus "detail": everything recorded about the offender. That's
   request headers (Authorization/Cookie stored as a hash and length, never
   the value), body samples, parse errors, the last events, samples from
-  during cooldown, the rate curve, reverse DNS, and what was already known
-  about that IP.
+  during cooldown, the rate curve, reverse DNS, what was already known
+  about that IP, and its last requests to our sites (recent_hits).
   404 if there's no such trip.
 
 
@@ -110,7 +147,8 @@ Tables
   defenses: what was done about it in the window. total is ids (IDS/IPS
     blocked) + bans (fail2ban, restores not counted) + trips (circuit
     breaker) + logins (refused by an app) + firewall (router firewall drops
-    and rejects). leaks (bans hits got through)
+    and rejects, plus packets this host rejected while the address was
+    banned, logged at most 12 a minute per address). leaks (bans hits got through)
     and alerts_allowed (IDS alerts let through) are warnings, not in total.
   defenses_30d: total over the 30 days to now, whatever since= is.
   drops=show also lists addresses whose only event is a firewall drop

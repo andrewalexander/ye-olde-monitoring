@@ -93,14 +93,19 @@ type Sighting struct {
 
 // Ban is fail2ban banning or unbanning an address.
 type Ban struct {
-	Hash     string
-	TS       time.Time
-	Event    string // ban | unban | increase (sets the length of the ban just made)
+	Hash string
+	TS   time.Time
+	// ban | unban | increase (sets the length of the ban just made) |
+	// ignored (an exempt address matched often enough to be banned)
+	Event    string
 	Jail     string
 	IP       string
 	Ports    string // the jail's port setting ("80,443", "ssh"); empty means all
 	BanTime  time.Duration
 	Failures int
+	// Found is when each line that led to a ban or ignored event was
+	// matched. It goes to ban_forensics, not the bans row.
+	Found []time.Time
 }
 
 // AuthFailure is an app refusing a login, from the app's own log.

@@ -157,7 +157,8 @@ ssh <router> cat /var/log/ulog/threat.log | dnscount ingest-dns -format unifi - 
 
 | Jail | Trigger | Ban |
 |---|---|---|
-| `caddy-probe` | 2 requests in an hour for paths no real client asks for (`.env`, `.git`, `.php`, `wp-`, `aws.json`, `*.log`, traversal… see `guard.probePaths`) | 1 day |
+| `caddy-probe-certain` | 1 request for a path no client ever asks for (`.env`, `.git`, `.ssh`, `wp-`, `*.pem`, `aws.json`, traversal… see `guard.probePathsCertain`) | 1 day |
+| `caddy-probe` | 2 requests in a day for paths no real client asks for (`.php`, `*.log`, `*.sql`, backups, lockfiles… see `guard.probePaths`) | 1 day |
 | `caddy-404` | 20 other 404s in 10 minutes, outside the path prefixes in `guard.notFoundIgnore` | 1 hour |
 | `caddy-401` | 20 401s in 10 minutes (token guessing; an app's own log often has no address for these) | 1 hour |
 | `dnscount-trip` | one trip of a breaker in `guard.tripBreakers` (default: ingest) | 1 hour |
@@ -167,8 +168,20 @@ Each new ban of the same IP lasts twice as long as the last, up to a week, acros
 
 `dnscount-fail2ban` reads the bans from fail2ban's journal. `report bans` pairs each ban with its unban, and counts requests that got through **during** the ban on a port the jail blocks. Any of those means the ban leaked.
 
+**Each ban keeps the same kind of evidence as a breaker trip.** About 15 seconds after a ban, once the access log has caught up, `dnscount-fail2ban` records:
+- the requests fail2ban matched
+- the address's last 20 requests
+- its request rate over the jail's window
+- everything we knew about it at that moment: hits, bans, trips, IDS alerts, refused logins, firewall drops
+
+After the unban it adds what the address kept sending while banned. The guard's ban action logs each rejected packet from a banned address to the kernel log, at most 12 a minute per address. `dnscount-banned-traffic` records those lines as firewall rejects (rule `f2b-<jail>`), so banned addresses still show up under Inbound IPs. Bans from before this existed are backfilled from the stored rows. There's no reverse DNS: recording runs offline.
+
+An exempt address (`guard.exempt`) that matches a jail often enough to be banned is recorded as **ignored**, with the same evidence. Nothing was blocked, so it never counts as a ban or a leak.
+
 ```sh
 dnscount report bans -since 7d                    # LEAK marks a ban that didn't hold
+dnscount report ban 42                            # everything recorded at ban #42, and what it sent while banned
+dnscount report bans -ignored -since 7d           # what exempt addresses would have been banned for
 sudo fail2ban-client status caddy-probe           # who is banned now
 sudo fail2ban-client set caddy-probe banip <ip>   # by hand (1 day, escalating)
 ```
@@ -210,7 +223,7 @@ dnscount check                               # data sanity checks
 
 **An example daily routine** for a service you are monitoring:
 1. `report alerts -action allowed -since 24h`: did the IPS let anything through?
-2. `report hits -status 404 -top ip -since 24h`: is there a scanner the jails missed? Ban it, and add any new paths to `guard.probePaths`.
+2. `report hits -status 404 -top ip -since 24h`: is there a scanner the jails missed? Ban it, and add any new paths to `guard.probePathsCertain` (never legitimate) or `guard.probePaths`.
 3. `report bans -since 7d`: who have we blocked? have they managed to accrue any hits since the ban?
 4. `report hits -new ip -site <site> -since 24h`: who is new?
 
@@ -231,9 +244,10 @@ If you `GET /api`, there is a plain-text reference for every endpoint (from `int
 | **Overview** | Health at a glance, indicators indexed, how many are flagged |
 | **Flagged** | Every listed IP or domain seen: **in** (it reached us), **out** (the LAN reached it) or **both**, with the LAN devices involved |
 | **Inbound IPs** | Everyone who hit us, got banned, raised an alert, tripped a breaker or had a login refused (and, on request, everyone the firewall only dropped): hits, one Defenses tally (window and 30 days), first/last seen across every kind of event, AS, country and lists; worst first |
+| **Defenses** | Everything done about an address in one timeline, newest first: IDS blocks, bans, breaker trips, refused logins and (on request) firewall drops, with ⚠ on a ban that leaked or an IDS alert let through. A ban or trip opens everything recorded when it happened |
 | **Domains** | What the LAN looked up: listed names, names that resolved to listed addresses, new names |
 | **LAN clients** | Each device and how many flagged names it looked up |
-| **Hits, Bans, Alerts, Trips** | The raw records, newest first, each with what's known about its address; a trip opens everything recorded when it tripped |
+| **Hits** | Requests to our sites, newest first, each with what's known about its address |
 | **IP and domain pages** | Everything about one indicator: lists (including ones it dropped off), hits, bans, alerts, who asked. A LAN address's page also has its device, sightings and what it looked up |
 | **Health** | WAL size, pressure, per-unit CPU and memory, query times, feed freshness, row counts, data checks, breakers |
 

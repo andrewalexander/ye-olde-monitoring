@@ -238,6 +238,12 @@ func (s *Store) InsertRecords(recs []ingest.Record) (int, error) {
 			if err := exec(q, args...); err != nil {
 				return 0, err
 			}
+			if b.Event == "ban" || b.Event == "ignored" {
+				// Not counted as a record inserted: it's part of the ban.
+				if _, err := tx.Exec(insertBanFound, foundJSON(b.Found), b.Hash); err != nil {
+					return 0, err
+				}
+			}
 		}
 	}
 	return n, tx.Commit()

@@ -77,12 +77,19 @@ in
         # Well past caddy-404's limit of 20, but under /web/.
         for i in range(25):
             attacker.succeed(f"curl -sS --max-time 5 -o /dev/null http://${server}/web/missing-{i}.js")
-        for path in ["/.env", "/.git/config"]:
-            attacker.succeed(f"curl -sS --max-time 5 -o /dev/null http://${server}{path}")
-        server.wait_until_succeeds("fail2ban-client status caddy-probe | grep -q '${attacker}'", timeout=60)
+        # One request for a path no client ever asks for is enough.
+        attacker.succeed("curl -sS --max-time 5 -o /dev/null http://${server}/.env")
+        server.wait_until_succeeds("fail2ban-client status caddy-probe-certain | grep -q '${attacker}'", timeout=60)
         # By now fail2ban has read past the 404s above.
         out = server.succeed("fail2ban-client status caddy-404")
         assert "${attacker}" not in out, out
+        attacker.fail("curl -sS --max-time 5 http://${server}/ok")
+        unban("caddy-probe-certain")
+
+    with subtest("two less certain probes get banned, and certain ones aren't counted twice"):
+        for path in ["/config.php", "/backup.zip"]:
+            attacker.succeed(f"curl -sS --max-time 5 -o /dev/null http://${server}{path}")
+        server.wait_until_succeeds("fail2ban-client status caddy-probe | grep -q '${attacker}'", timeout=60)
         attacker.fail("curl -sS --max-time 5 http://${server}/ok")
         unban("caddy-probe")
 
@@ -113,8 +120,9 @@ in
         for path in ["/.env", "/.git/config", "/wp-login.php"]:
             client.succeed(f"curl -sS --max-time 5 -o /dev/null http://${server}{path}")
         server.sleep(5)
-        out = server.succeed("fail2ban-client status caddy-probe")
-        assert "${client}" not in out, out
+        for jail in ["caddy-probe-certain", "caddy-probe"]:
+            out = server.succeed(f"fail2ban-client status {jail}")
+            assert "${client}" not in out, out
         client.succeed("curl -fsS --max-time 5 http://${server}/ok")
 
     with subtest("dnscount records both bans, and neither leaked"):
@@ -122,14 +130,31 @@ in
         server.wait_for_open_port(8090)
         bans = "curl -fsS http://127.0.0.1:8090/api/bans?ip=${attacker}"
         # Each ban paired with its unban, and the jail's ports carried over.
-        for jail in ["caddy-probe", "caddy-404"]:
+        for jail in ["caddy-probe-certain", "caddy-probe", "caddy-404"]:
             server.wait_until_succeeds(
                 f"{bans} | jq -e 'map(select(.jail == \"{jail}\" and .unbanned_at != null and .ports == \"80\")) | length == 1'",
                 timeout=60,
             )
         print(server.succeed("dnscount-admin report bans"))
         server.succeed(f"{bans} | jq -e 'all(.hits_during == 0)'")
-        # Reading the whole journal again (as every restart does) adds nothing.
+
+    with subtest("each ban keeps its evidence, and what the attacker sent while banned"):
+        server.wait_for_unit("dnscount-banned-traffic.service")
+        bid = server.succeed(f"{bans} | jq -r 'map(select(.jail == \"caddy-probe-certain\"))[0].id'").strip()
+        ban = f"curl -fsS http://127.0.0.1:8090/api/bans/{bid}"
+        server.wait_until_succeeds(f"{ban} | jq -e '.detail.trigger.hits | map(.path) | index(\"/.env\") != null'", timeout=90)
+        server.succeed(f"{ban} | jq -e '(.detail.samples | length) > 0 and .detail.history != null'")
+        # The curl refused during the ban was logged by the ban action and recorded.
+        server.wait_until_succeeds("journalctl _TRANSPORT=kernel | grep -q 'f2b-caddy-probe-certain: .*SRC=${attacker}'", timeout=30)
+        server.wait_until_succeeds(f"{ban} | jq -e '.detail.during.blocked > 0 and .detail.during.leaked == 0'", timeout=90)
+        print(server.succeed(f"dnscount-admin report ban {bid}"))
+
+    with subtest("an exempt address that would have been banned is recorded, not counted"):
+        ignored = "curl -fsS 'http://127.0.0.1:8090/api/bans?ip=${client}&ignored=1'"
+        server.wait_until_succeeds(f"{ignored} | jq -e 'length >= 1 and all(.ignored)'", timeout=60)
+        server.succeed("curl -fsS 'http://127.0.0.1:8090/api/bans?ip=${client}' | jq -e 'length == 0'")
+
+    with subtest("reading the whole journal again (as every restart does) adds nothing"):
         before = server.succeed("dnscount-admin report bans | wc -l")
         server.succeed("systemctl restart dnscount-fail2ban.service")
         server.sleep(5)

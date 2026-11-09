@@ -191,6 +191,7 @@ type HitFilter struct {
 	Site, IP string
 	Status   string // 404 or 4xx
 	Since    time.Time
+	Until    time.Time // before this; zero is no bound
 	Limit    int
 }
 
@@ -205,8 +206,8 @@ func (s *Store) Hits(f HitFilter) ([]hit.Hit, error) {
 	}
 	rows, err := s.query(`SELECT line_hash, ts, site, source, client_ip, forwarded_for, method, host, path,
 		query, status, bytes, user_agent, referer FROM hits
-		WHERE ts >= ? AND (? = '' OR site = ?) AND (? = '' OR client_ip = ?) AND status BETWEEN ? AND ?
-		ORDER BY ts DESC LIMIT ?`, fmtTime(f.Since), f.Site, f.Site, f.IP, f.IP, lo, hi, f.Limit)
+		WHERE ts >= ? AND ts < ? AND (? = '' OR site = ?) AND (? = '' OR client_ip = ?) AND status BETWEEN ? AND ?
+		ORDER BY ts DESC LIMIT ?`, fmtTime(f.Since), upper(f.Until), f.Site, f.Site, f.IP, f.IP, lo, hi, f.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -406,26 +407,60 @@ type IPHistory struct {
 	DNSQueries  Seen  `json:"dns_queries"`
 	Connections Seen  `json:"connections"`
 	Trips       int64 `json:"previous_trips"`
+	Bans        int64 `json:"previous_bans"` // fail2ban bans, restores included
+	Alerts      int64 `json:"ids_alerts"`    // IDS/IPS alerts with it as the source
+	Logins      int64 `json:"refused_logins"`
+	// Firewall is the router dropping or rejecting it, and this host
+	// rejecting it while banned.
+	Firewall int64 `json:"firewall_drops"`
 }
 
-func (s *Store) IPHistory(ip string) (IPHistory, error) {
+// IPHistory is everything we have on ip, up to now.
+func (s *Store) IPHistory(ip string) (IPHistory, error) { return s.IPHistoryAt(ip, time.Time{}) }
+
+// IPHistoryAt is everything we had on ip before `at`, so a trip or ban
+// records what was known then, even when it's recorded later. A zero at is
+// now.
+func (s *Store) IPHistoryAt(ip string, at time.Time) (IPHistory, error) {
 	var h IPHistory
+	end := upper(at)
 	for _, x := range []struct {
 		dst *Seen
 		q   string
 	}{
-		{&h.Hits, `SELECT count(*), coalesce(min(ts),''), coalesce(max(ts),'') FROM hits WHERE client_ip = ?`},
-		{&h.DNSQueries, `SELECT count(*), coalesce(min(ts),''), coalesce(max(ts),'') FROM dns_queries WHERE client_ip = ?`},
-		{&h.Connections, `SELECT count(*), coalesce(min(ts),''), coalesce(max(ts),'') FROM connections WHERE client_ip = ?1 OR dst_ip = ?1`},
+		{&h.Hits, `SELECT count(*), coalesce(min(ts),''), coalesce(max(ts),'') FROM hits WHERE client_ip = ?1 AND ts < ?2`},
+		{&h.DNSQueries, `SELECT count(*), coalesce(min(ts),''), coalesce(max(ts),'') FROM dns_queries WHERE client_ip = ?1 AND ts < ?2`},
+		{&h.Connections, `SELECT count(*), coalesce(min(ts),''), coalesce(max(ts),'') FROM connections WHERE (client_ip = ?1 OR dst_ip = ?1) AND ts < ?2`},
 	} {
 		var first, last string
-		if err := s.queryRow(x.q, ip).Scan(&x.dst.Count, &first, &last); err != nil {
+		if err := s.queryRow(x.q, ip, end).Scan(&x.dst.Count, &first, &last); err != nil {
 			return h, err
 		}
 		x.dst.First, x.dst.Last = parseTime(first), parseTime(last)
 	}
-	err := s.queryRow(`SELECT count(*) FROM breaker_trips WHERE key = ?`, ip).Scan(&h.Trips)
-	return h, err
+	for _, x := range []struct {
+		dst *int64
+		q   string
+	}{
+		{&h.Trips, `SELECT count(*) FROM breaker_trips WHERE key = ?1 AND tripped_at < ?2`},
+		{&h.Bans, `SELECT count(*) FROM bans WHERE ip = ?1 AND event = 'ban' AND ts < ?2`},
+		{&h.Alerts, `SELECT count(*) FROM ids_alerts WHERE src_ip = ?1 AND ts < ?2`},
+		{&h.Logins, `SELECT count(*) FROM auth_failures WHERE ip = ?1 AND ts < ?2`},
+		{&h.Firewall, `SELECT count(*) FROM connections WHERE client_ip = ?1 AND action IN ('drop', 'reject') AND ts < ?2`},
+	} {
+		if err := s.queryRow(x.q, ip, end).Scan(x.dst); err != nil {
+			return h, err
+		}
+	}
+	return h, nil
+}
+
+// upper is a ts bound for "before t"; a zero t is after every row.
+func upper(t time.Time) string {
+	if t.IsZero() {
+		return "9999"
+	}
+	return fmtTime(t)
 }
 
 // Newest is the time of the newest DNS lookup and the newest hit, zero if

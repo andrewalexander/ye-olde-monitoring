@@ -56,3 +56,26 @@ func TestInboundWindowsUseTimeIndexes(t *testing.T) {
 		}
 	}
 }
+
+// The Defenses list reads each source newest first over the window, all
+// addresses or one, through an index. Over everyone the index order is the
+// answer's order, so there's no sort of the window either.
+func TestDefenseWindowsUseIndexes(t *testing.T) {
+	const since, until = "2026-01-01T00:00:00Z", "9999"
+	for _, c := range []struct {
+		q     string
+		args  []any
+		index string
+		sorts bool // one address's rows are few; sorting them is fine
+	}{
+		{authFailuresAll, []any{since, until, 100}, "auth_failures_ts", false},
+		{authFailuresFor, []any{"203.0.113.1", since, until, 100}, "auth_failures_ip", true},
+		{defenseDrops, []any{since, 100}, "connections_dropped", false},
+		{defenseDropsFor, []any{since, "203.0.113.1", 100}, "connections_client_ip", true},
+	} {
+		got := planOf(t, c.q, c.args...)
+		if !strings.Contains(got, c.index) || !c.sorts && strings.Contains(got, "TEMP B-TREE") {
+			t.Errorf("plan for %.40q… = %q, want it to use %s", c.q, got, c.index)
+		}
+	}
+}

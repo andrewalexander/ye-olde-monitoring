@@ -47,6 +47,12 @@ let
   # actually blocks. Jails without one cover every port.
   jailPorts = concatStringsSep ";" (lib.mapAttrsToList (name: j: "${name}=${toString j.settings.port}")
     (lib.filterAttrs (_: j: builtins.isAttrs j && (j.settings or { }) ? port) config.services.fail2ban.jails));
+  # Each jail's maxretry/findtime, for ban forensics (the rate curve's
+  # window) and for when an exempt address would have been banned. Jails
+  # that don't set one get fail2ban's NixOS defaults.
+  jailLimits = concatStringsSep ";" (lib.mapAttrsToList
+    (name: j: "${name}=${toString (j.settings.maxretry or config.services.fail2ban.maxretry)}/${toString (j.settings.findtime or "10m")}")
+    (lib.filterAttrs (name: j: name != "DEFAULT" && builtins.isAttrs j) config.services.fail2ban.jails));
   syslogListen = "udp://${cfg.syslog.address}:${toString cfg.syslog.port}";
 
   # The lookups config: caps, which providers run on their own, our own domains.
@@ -406,7 +412,31 @@ in
           set -o pipefail
           ${config.systemd.package}/bin/journalctl --unit=fail2ban.service --output=short-iso \
             --no-pager --follow --lines=all \
-            | ${bin} ingest-bans -follow -jail-ports ${lib.escapeShellArg jailPorts} -
+            | ${bin} ingest-bans -follow -jail-ports ${lib.escapeShellArg jailPorts} \
+              -jail-limits ${lib.escapeShellArg jailLimits} -
+        '';
+        SupplementaryGroups = [ "systemd-journal" ];
+        Restart = "always";
+        RestartSec = 5;
+      };
+    };
+
+    # What a banned address keeps sending: the guard's ban action logs each
+    # packet it rejects (rate-limited per address) to the kernel log, and
+    # this records them as firewall rejects (rule f2b-<jail>, source host-fw).
+    systemd.services.dnscount-banned-traffic = mkIf (cfg.fail2ban.enable && cfg.guard.enable) {
+      description = "dnscount: record packets fail2ban rejected from banned addresses";
+      after = [ "dnscount-serve.service" "fail2ban.service" ];
+      wantedBy = [ "multi-user.target" ];
+      environment.DNSCOUNT_DB = db;
+      # Like dnscount-fail2ban: the whole journal is read on every start and
+      # already-recorded lines are skipped.
+      serviceConfig = hardening // noNetwork // {
+        ExecStart = pkgs.writeShellScript "dnscount-banned-traffic" ''
+          set -o pipefail
+          ${config.systemd.package}/bin/journalctl _TRANSPORT=kernel --grep='f2b-' --output=short-iso \
+            --no-pager --follow --lines=all \
+            | ${bin} ingest-dns -format firewall -follow -
         '';
         SupplementaryGroups = [ "systemd-journal" ];
         Restart = "always";

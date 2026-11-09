@@ -22,6 +22,7 @@ import (
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/dns"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/f2b"
+	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/fw"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/jellyfin"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/ingest/syslog"
 	"github.com/andrewalexander/ye-olde-monitoring/internal/server"
@@ -230,7 +231,7 @@ func ingestAccess(args []string) error {
 func ingestDNS(args []string) error {
 	fs := flag.NewFlagSet("ingest-dns", flag.ExitOnError)
 	db := dbFlag(fs)
-	format := fs.String("format", "dnsmasq", "dnsmasq (UniFi, Pi-hole) | unifi (dnsmasq, firewall, IDS/IPS and LAN-device lines, e.g. syslog -raw files or the router's threat.log) | adguard")
+	format := fs.String("format", "dnsmasq", "dnsmasq (UniFi, Pi-hole) | unifi (dnsmasq, firewall, IDS/IPS and LAN-device lines, e.g. syslog -raw files or the router's threat.log) | adguard | firewall (kernel firewall lines alone, e.g. this host's journal: what fail2ban rejected from a banned address)")
 	follow := fs.Bool("follow", false, "keep reading as the file grows (like tail -f)")
 	fs.Parse(args)
 	var p ingest.LineParser
@@ -242,6 +243,8 @@ func ingestDNS(args []string) error {
 		p = ingest.Unguard(syslog.UniFi())
 	case "adguard":
 		p = dns.AdGuard{}
+	case "firewall":
+		p = ingest.Unguard(fw.IPTables{})
 	default:
 		return fmt.Errorf("unknown -format %q", *format)
 	}
@@ -252,13 +255,36 @@ func ingestBans(args []string) error {
 	fs := flag.NewFlagSet("ingest-bans", flag.ExitOnError)
 	db := dbFlag(fs)
 	ports := fs.String("jail-ports", "", `each jail's port setting, "sshd=ssh;jellyfin=80,443,8096"; jails not listed cover all ports`)
+	limits := fs.String("jail-limits", "", `each jail's maxretry/findtime, "caddy-probe=2/1d;jellyfin=5/10m"; jails not listed get 3/10m`)
 	follow := fs.Bool("follow", false, "keep reading as the input grows, writing each ban as it comes (use with journalctl -f)")
+	settle := fs.Duration("settle", 15*time.Second, "how long after a ban or unban to wait before recording its forensics, so the access and firewall logs have caught up")
 	fs.Parse(args)
 	m, err := f2b.ParsePorts(*ports)
 	if err != nil {
 		return fmt.Errorf("-jail-ports: %w", err)
 	}
-	return runIngest(*db, &f2b.Fail2ban{Ports: m}, fs.Args(), *follow, nil)
+	l, err := f2b.ParseLimits(*limits)
+	if err != nil {
+		return fmt.Errorf("-jail-limits: %w", err)
+	}
+	// Forensics for each ban, like a trip's: what was known about the
+	// address then, and what it kept sending while banned.
+	st, err := store.Open(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	rec := &forensics.BanRecorder{St: st, Limits: l, Log: log.New(os.Stderr, "", log.LstdFlags), Now: time.Now, Settle: *settle}
+	if *follow {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go rec.Run(ctx)
+		return runIngest(*db, &f2b.Fail2ban{Ports: m, Limits: l}, fs.Args(), true, nil)
+	}
+	if err := runIngest(*db, &f2b.Fail2ban{Ports: m, Limits: l}, fs.Args(), false, nil); err != nil {
+		return err
+	}
+	return rec.Drain()
 }
 
 func ingestAuth(args []string) error {

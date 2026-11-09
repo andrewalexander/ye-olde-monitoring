@@ -32,11 +32,20 @@ import (
 // The bracketed prefix is the rule name; UniFi encodes the action in it
 // (-A- accept, -D- drop, -R- reject). An uptime stamp "[ 1234.567]" before
 // it is ignored.
+//
+// It also reads this host's own kernel lines for packets fail2ban rejected
+// from a banned address (the guard's dnscount-iptables-log action), as
+// journalctl prints them:
+//
+//	2026-11-09T10:00:00-05:00 host kernel: f2b-caddy-probe: IN=enp1s0 OUT= MAC=... SRC=203.0.113.9 DST=192.0.2.1 ... PROTO=TCP SPT=5555 DPT=443 ...
+//
+// Those become rule "f2b-<jail>", action reject, source host-fw.
 type IPTables struct{}
 
 var (
 	uptimeRE = regexp.MustCompile(`^\[\s*\d+\.\d+\]\s*`)
 	ruleRE   = regexp.MustCompile(`^\[([^\]]+)\]\s*`)
+	f2bRE    = regexp.MustCompile(`^(f2b-[^:\s]+):\s*`)
 	actionRE = regexp.MustCompile(`-(A|D|R|RET)-`)
 )
 
@@ -71,7 +80,10 @@ func (IPTables) ParseLine(line string, now time.Time) (ingest.Record, error) {
 		}
 	}
 	c := &ingest.Conn{TS: h.TS, Source: "unifi-fw"}
-	if m := ruleRE.FindStringSubmatch(msg); m != nil {
+	if m := f2bRE.FindStringSubmatch(msg); m != nil {
+		c.Source, c.Rule, c.Action = "host-fw", m[1], "reject"
+		msg = msg[len(m[0]):]
+	} else if m := ruleRE.FindStringSubmatch(msg); m != nil {
 		c.Rule = m[1]
 		msg = msg[len(m[0]):]
 		if a := actionRE.FindStringSubmatch(c.Rule + "-"); a != nil {

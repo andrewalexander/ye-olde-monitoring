@@ -19,10 +19,14 @@ func TestFail2banLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	limits, err := f2b.ParseLimits("jellyfin=3/10m; caddy-probe-certain=1/1h")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var bans []ingest.Ban
 	now := time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)
 	var increases []ingest.Ban
-	st, err := ingest.Run(f, &f2b.Fail2ban{Ports: ports}, now, func(r ingest.Record) error {
+	st, err := ingest.Run(f, &f2b.Fail2ban{Ports: ports, Limits: limits}, now, func(r ingest.Record) error {
 		if r.Ban.Event == "increase" {
 			increases = append(increases, *r.Ban)
 		} else {
@@ -33,7 +37,7 @@ func TestFail2banLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (ingest.Stats{Lines: 20, Records: 11, Skipped: 8, Bad: 1}); st != want {
+	if want := (ingest.Stats{Lines: 22, Records: 12, Skipped: 9, Bad: 1}); st != want {
 		t.Errorf("stats = %+v, want %+v", st, want)
 	}
 	est := time.FixedZone("", -5*3600)
@@ -49,6 +53,9 @@ func TestFail2banLog(t *testing.T) {
 		{TS: time.Date(2026, 10, 27, 23, 28, 54, 0, est), Event: "ban", Jail: "caddy-probe", IP: "203.0.113.50"},
 		{TS: time.Date(2026, 10, 27, 23, 40, 0, 0, est), Event: "unban", Jail: "caddy-probe", IP: "203.0.113.50"},
 		{TS: time.Date(2026, 10, 27, 23, 50, 0, 0, est), Event: "ban", Jail: "caddy-probe", IP: "203.0.113.50"},
+		// An exempt address that would have been banned (the one jellyfin
+		// Ignore above is under that jail's 3; ignoreself is skipped).
+		{TS: time.Date(2026, 10, 28, 8, 0, 0, 0, est), Event: "ignored", Jail: "caddy-probe-certain", IP: "192.168.1.2", Failures: 1},
 	}
 	if len(increases) != 2 || increases[0].BanTime != 48*time.Hour || increases[1].BanTime != 36*time.Hour {
 		t.Errorf("increases = %+v, want 2d and 1d12h", increases)
@@ -63,6 +70,29 @@ func TestFail2banLog(t *testing.T) {
 			b.Failures != w.Failures || b.BanTime != w.BanTime {
 			t.Errorf("ban %d = %+v\nwant     %+v", i, b, w)
 		}
+		if len(b.Found) != b.Failures {
+			t.Errorf("ban %d: %d found times for %d failures", i, len(b.Found), b.Failures)
+		}
+	}
+	// Found times are the matched lines' own, not when fail2ban logged them.
+	if f := bans[0].Found; len(f) != 3 || !f[1].Equal(time.Date(2026, 10, 27, 20, 22, 50, 0, est)) {
+		t.Errorf("jellyfin ban found = %v", f)
+	}
+}
+
+func TestParseLimits(t *testing.T) {
+	got, err := f2b.ParseLimits("caddy-probe=2/1d; caddy-404=20/10m;sshd=5/600")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]f2b.Limit{"caddy-probe": {2, 24 * time.Hour}, "caddy-404": {20, 10 * time.Minute}, "sshd": {5, 10 * time.Minute}}
+	for k, w := range want {
+		if got[k] != w {
+			t.Errorf("%s = %+v, want %+v", k, got[k], w)
+		}
+	}
+	if _, err := f2b.ParseLimits("caddy-probe=2"); err == nil {
+		t.Error("accepted a limit with no findtime")
 	}
 }
 

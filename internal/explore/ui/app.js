@@ -211,7 +211,7 @@ function defensesCol() {
     sorter: (a, b) => ((a || {}).total || 0) - ((b || {}).total || 0),
     headerFilterPlaceholder: "ids, ban, trip, login, fw, leak, allowed",
     headerFilterFunc: (term, d) => defenseKinds(d || {}).some((k) => k.includes(String(term).toLowerCase().trim())),
-    headerTooltip: "What we did about it in this window: IDS/IPS blocks, fail2ban bans, breaker trips, refused logins and firewall drops. \u26a0 marks a ban that leaked or an IDS alert let through. Filter by kind: ids, ban, trip, login, fw, leak, allowed. Open the address for each event.",
+    headerTooltip: "What we did about it in this window: IDS/IPS blocks, fail2ban bans, breaker trips, refused logins and firewall drops. \u26a0 marks a ban that leaked or an IDS alert let through. Filter by kind: ids, ban, trip, login, fw, leak, allowed. Open the address for its events, or see everyone's on Defenses.",
   });
 }
 function hitsCol() {
@@ -267,6 +267,35 @@ const LIST_VIEWS = {
       col("Defenses 30d", "defenses_30d", "num", { headerTooltip: "The same kinds over the last 30 days, whatever the window" }),
       abuseCol(), portsCol(), col("Sites", "sites", "list"),
       col("First seen", "first", "time"), col("Last seen", "last", "time"),
+    ],
+  },
+  defenses: {
+    title: "Defenses",
+    lede: "Everything we did about an address, newest first: IDS blocks, fail2ban bans, breaker trips and refused logins; firewall drops when you ask for them. \u26a0 marks a ban that leaked or an IDS alert let through. Open a ban or trip for everything recorded when it happened.",
+    url: "/api/defenses", options: ["kind"],
+    columns: () => [
+      col("Time", "ts", "time"),
+      col("Kind", "kind", "text", {
+        formatter: (c) => el("span", { class: "tag", text: c.getValue() }),
+        headerFilter: "list", headerFilterParams: { values: { "": "any", ids: "ids", ban: "ban", trip: "trip", login: "login", fw: "fw" } },
+      }),
+      col("\u26a0 Warning", "warn", "text", {
+        formatter: (c) => {
+          const w = c.getValue();
+          if (!w) return document.createTextNode("");
+          const text = { leak: "leak: hits got through", allowed: "allowed: let through" }[w] || w;
+          return el("span", { class: "leak", text: `\u26a0 ${text}` });
+        },
+        headerFilterPlaceholder: "leak, allowed",
+        headerTooltip: "leak: hits got through while the ban held. allowed: the IDS matched but let it through.",
+      }),
+      col("IP", "ip", "ip"), col("Verdict", "verdict", "verdict"), col("Feeds", "feeds", "tags"), col("CC", "country"),
+      col("What", "what", "text", { maxWidth: 480 }),
+      col("Open", "id", "num", {
+        formatter: (c) => { const r = c.getRow().getData(); return r.id && (r.kind === "ban" || r.kind === "trip") ? link(r.kind, String(r.id), `${r.kind} #${r.id}`) : document.createTextNode(""); },
+        headerTooltip: "A ban's or trip's page: everything recorded when it happened",
+      }),
+      col("To", "to", "ip"), col("Port", "port", "num"), bans30(),
     ],
   },
   domains: {
@@ -327,22 +356,22 @@ const LIST_VIEWS = {
       col("Referer", "referer", "text", { maxWidth: 240 }), bans30(), col("Feeds", "feeds", "tags"),
     ],
   },
+};
+// Each kind of defense in full, for an address's page. The Defenses page
+// lists them all as one timeline instead.
+const EVENT_TABLES = {
   bans: {
-    title: "Bans",
-    lede: "fail2ban bans paired with their unbans. Any request that got through while a ban was in force is a LEAK.",
-    url: "/api/bans", options: [],
     columns: () => [
+      col("Ban", "id", "num", { formatter: (c) => link("ban", String(c.getValue()), `#${c.getValue()}`) }),
       col("Banned", "banned_at", "time"), col("Jail", "jail"), col("IP", "ip", "ip"), col("Verdict", "verdict", "verdict"),
       col("Feeds", "feeds", "tags"), col("CC", "country"), col("Failures", "failures", "num"), col("For", "bantime_ns", "dur"),
-      col("Unbanned", "unbanned_at", "time", { formatter: (c) => document.createTextNode(fmtTime(c.getValue()) || "still banned") }),
+      col("Unbanned", "unbanned_at", "time", { formatter: (c) => document.createTextNode(fmtTime(c.getValue()) || (c.getRow().getData().ignored ? "" : "still banned")) }),
       col("Hits 24h before", "hits_24h_before", "num"), col("Hits during", "hits_during", "leak"), bans30(),
-      col("Restart", "restored", "bool", { headerTooltip: "fail2ban re-applying this ban after a restart: the ban before it continuing, not a new one", formatter: (c) => document.createTextNode(c.getValue() ? "restored" : "") }),
+      col("Note", "restored", "bool", { headerTooltip: "restored: fail2ban re-applying this ban after a restart, the ban before it continuing. exempt: fail2ban would have banned it, but it's in an exempt network, so nothing was blocked.",
+        formatter: (c) => document.createTextNode(c.getRow().getData().ignored ? "exempt, not banned" : c.getValue() ? "restored" : "") }),
     ],
   },
   alerts: {
-    title: "IDS/IPS alerts",
-    lede: "The router's IPS alerts. allowed = detected only; blocked = dropped by the router. UniFi's events name the LAN device (and its MAC) but often give no address for it; older rows get those fields from the raw-file backfill.",
-    url: "/api/alerts", options: ["action"],
     columns: () => [
       col("Time", "ts", "time"), col("Action", "action"), col("Direction", "direction"),
       col("From", "src_ip", "ip"), col("Port", "src_port", "num"), col("From device", "src_name"),
@@ -354,9 +383,6 @@ const LIST_VIEWS = {
     ],
   },
   trips: {
-    title: "Breaker trips",
-    lede: "Clients that tripped dnscount's own rate limits.",
-    url: "/api/trips", options: [],
     columns: () => [
       col("Trip", "id", "num", { formatter: (c) => link("trip", String(c.getValue()), `#${c.getValue()}`) }),
       col("Tripped", "tripped_at", "time"), col("Breaker", "breaker"), col("Who", "key", "ip"), col("Reason", "reason"),
@@ -369,13 +395,12 @@ function worst(a, b) { return rank(a) >= rank(b) ? a : b; }
 
 const NAV = [
   ["overview", "Overview"], ["health", "Health"], ["flagged", "Flagged"], ["ips", "Inbound IPs"],
-  ["domains", "Domains"], ["clients", "LAN clients"], ["hits", "Hits"], ["bans", "Bans"],
-  ["alerts", "Alerts"], ["trips", "Trips"],
+  ["defenses", "Defenses"], ["domains", "Domains"], ["clients", "LAN clients"], ["hits", "Hits"],
 ];
 
 function renderNav(view) {
   const nav = document.getElementById("nav");
-  const parent = { ip: "ips", domain: "domains", trip: "trips" }[view];
+  const parent = { ip: "ips", domain: "domains", trip: "defenses", ban: "defenses" }[view];
   nav.replaceChildren(...NAV.map(([v, t]) => el("a", { href: href(v), class: v === view || v === parent ? "on" : "", text: t })));
 }
 
@@ -398,6 +423,12 @@ function optionControls(view, def, q) {
         [["", "any"], ["allowed", "allowed"], ["blocked", "blocked"]].map(([v, t]) => el("option", { value: v, text: t })));
       s.value = q.get("action") || "";
       box.append(el("label", {}, "action ", s));
+    } else if (o === "kind") {
+      const s = el("select", { onchange: (e) => set("kind", e.target.value) },
+        [["", "all but firewall drops"], ["ids", "IDS alerts"], ["allowed", "\u26a0 IDS alerts let through"], ["ban", "bans"], ["trip", "breaker trips"],
+          ["login", "refused logins"], ["fw", "firewall drops"], ["all", "everything, with firewall drops"]].map(([v, t]) => el("option", { value: v, text: t })));
+      s.value = q.get("kind") || "";
+      box.append(el("label", { title: "Firewall drops run to tens of thousands a day, so they're left out unless you ask" }, "kind ", s));
     } else if (o === "drops") {
       const s = el("select", { onchange: (e) => set("drops", e.target.value) },
         [["", "hidden"], ["show", "shown"]].map(([v, t]) => el("option", { value: v, text: t })));
@@ -553,7 +584,11 @@ async function renderIP(ip) {
       ["Hits", h.hits?.count ? `${fmtNum(h.hits.count)} (${fmtTime(h.hits.first)} – ${fmtTime(h.hits.last)})` : "0"],
       ["DNS lookups", fmtNum(h.dns_queries?.count)],
       ["Connections", fmtNum(h.connections?.count)],
+      ["Bans", fmtNum(h.previous_bans)],
       ["Breaker trips", fmtNum(h.previous_trips)],
+      ["IDS alerts", fmtNum(h.ids_alerts)],
+      ["Refused logins", fmtNum(h.refused_logins)],
+      ["Firewall drops", fmtNum(h.firewall_drops)],
     ])), p.lan ? [] : lookupCards(p.intel, ip, "ip")),
   );
   if (p.intel && (p.intel.matches || []).length) { main.append(el("h2", { text: "Lists" })); matchesTable(main, p.intel.matches); }
@@ -568,15 +603,15 @@ async function renderIP(ip) {
     col("LAN clients", "clients", "list", { formatter: (c) => el("span", { class: "tags" }, (c.getValue() || []).map(clientLink)) })]);
   main.append(el("h2", { text: "Requests to our sites (incoming)" }));
   table(main, p.hits, LIST_VIEWS.hits.columns().filter(perIP));
-  main.append(el("h2", { text: "Bans" }));
-  table(main, p.bans, LIST_VIEWS.bans.columns().filter(perIP));
+  main.append(el("h2", { text: "Bans (and what an exempt address would have been banned for)" }));
+  table(main, p.bans, EVENT_TABLES.bans.columns().filter(perIP));
   main.append(el("h2", { text: "IDS alerts" }));
-  table(main, p.alerts, LIST_VIEWS.alerts.columns().filter(perIP));
+  table(main, p.alerts, EVENT_TABLES.alerts.columns().filter(perIP));
   main.append(el("h2", { text: "Breaker trips" }));
-  table(main, p.trips, LIST_VIEWS.trips.columns().filter(perIP));
+  table(main, p.trips, EVENT_TABLES.trips.columns().filter(perIP));
   main.append(el("h2", { text: "Refused logins" }));
   table(main, p.auth_failures, [col("When", "ts", "time"), col("App", "source"), col("Name tried", "user")]);
-  main.append(el("h2", { text: "Logged connections (router firewall)" }));
+  main.append(el("h2", { text: "Logged connections (router firewall, and this host's while banned)" }));
   table(main, p.connections, [col("From", "client_ip", "ip"), col("To", "dst_ip", "ip"), col("Port", "dst_port", "num"), col("Proto", "proto"),
     col("Rule", "rule"), col("Action", "action"), col("Count", "count", "num"), col("First", "first", "time"), col("Last", "last", "time")]);
   if ((p.sightings || []).length) sightingsTable(main, p.sightings);
@@ -670,6 +705,44 @@ async function renderTrip(id) {
       ["Suppressed during cooldown", fmtNum(t.suppressed_during_cooldown)], ["First seen in window", fmtTime(t.first_seen_in_window)],
     ]))));
   main.append(el("h2", { text: "Detail" }), el("pre", { class: "detail", text: JSON.stringify(t.detail ?? null, null, 2) }));
+}
+
+// One ban: what was recorded about the address when fail2ban banned it (or
+// would have, for an exempt address), and what it kept sending while banned.
+async function renderBan(id) {
+  const main = $main();
+  main.replaceChildren(el("h1", { text: `Ban #${id}` }), el("p", { class: "muted", text: "Loading…" }));
+  const b = await api(`/api/bans/${encodeURIComponent(id)}`);
+  const d = b.detail || {};
+  const during = d.during;
+  main.replaceChildren(el("h1", { text: `Ban #${b.id}: ${b.jail}${b.ignored ? " (exempt, not banned)" : ""}` }),
+    el("p", { class: "lede", text: "Everything recorded about the address when it was banned: the requests that matched, its last requests, the rate curve and what we knew of it then; and after the unban, what it kept sending." }),
+    el("div", { class: "grid" }, el("div", { class: "card" }, kv([
+      ["Who", ipLink(b.ip)], ["Jail", b.detail ? `${b.jail} (${fmtNum(d.maxretry)} in ${fmtAge(d.findtime_s)})` : b.jail],
+      [b.ignored ? "Would have banned" : "Banned", fmtTime(b.banned_at)],
+      ["Unbanned", b.ignored ? "" : fmtTime(b.unbanned_at) || "still banned"], ["For", fmtDur(b.bantime_ns)],
+      ["Matches", fmtNum(b.failures)], ["Requests 24h before", fmtNum(b.hits_24h_before)],
+      ["Blocked while banned", during ? `${fmtNum(during.blocked)} logged by this host, ${fmtNum(during.router_seen)} by the router` : b.ignored ? "" : "after the unban"],
+      ["Got through while banned", during ? fmtNum(during.leaked) : fmtNum(b.hits_during)],
+      ["Restore of", d.restored_of ? link("ban", String(d.restored_of), `#${d.restored_of}`) : ""],
+      ["Recorded", d.backfilled ? "later, from stored rows" : b.detail ? "at the ban" : "not yet"],
+    ]))));
+  if (!b.detail) return;
+  const hitCols = () => LIST_VIEWS.hits.columns().filter(perIP);
+  main.append(el("h2", { text: "What matched" }));
+  table(main, d.trigger?.hits || [], hitCols());
+  if ((d.trigger?.logins || []).length) {
+    main.append(el("h2", { text: "Refused logins that matched" }));
+    table(main, d.trigger.logins, [col("When", "ts", "time"), col("App", "source"), col("Name tried", "user")]);
+  }
+  main.append(el("h2", { text: "Its last requests up to the ban" }));
+  table(main, d.samples || [], hitCols());
+  if (during) {
+    main.append(el("h2", { text: "What it kept sending (first few blocked)" }));
+    table(main, during.late_samples || [], [col("When", "ts", "time"), col("To", "dst_ip", "ip"), col("Port", "dst_port", "num"),
+      col("Proto", "proto"), col("Rule", "rule")]);
+  }
+  main.append(el("h2", { text: "Detail" }), el("pre", { class: "detail", text: JSON.stringify(d, null, 2) }));
 }
 
 // ---------- health ----------
@@ -851,6 +924,9 @@ async function renderHealth() {
 
 // ---------- router ----------
 let routeSeq = 0;
+// The Bans, Alerts and Trips pages became Defenses.
+const OLD_DEFENSE_VIEWS = { bans: "ban", alerts: "ids", trips: "trip" };
+
 async function route(opts) {
   const { view, arg, q } = parseHash();
   const seq = ++routeSeq;
@@ -869,7 +945,9 @@ async function route(opts) {
     else if (view === "ip" && arg) await renderIP(arg);
     else if (view === "domain" && arg) await renderDomain(arg);
     else if (view === "trip" && arg) await renderTrip(arg);
+    else if (view === "ban" && arg) await renderBan(arg);
     else if (view === "client" && arg) location.replace(href("ip", arg)); // old links
+    else if (OLD_DEFENSE_VIEWS[view]) location.replace(href("defenses", "", new URLSearchParams({ kind: OLD_DEFENSE_VIEWS[view] })));
     else if (view === "health") await renderHealth();
     else await renderOverview();
     if (opts?.quiet) {
