@@ -78,8 +78,11 @@ let
   # A directory outside dataDir, such as an archive on a second disk. The unit
   # won't start until the filesystem holding it is mounted, so a nofail drive
   # that's missing fails the job instead of filling the disk under the mount
-  # point. Root creates it on each start (a tmpfiles rule could run before the
-  # mount) and, on btrfs, has new files compressed with zstd.
+  # point. A separate unsandboxed unit, <job>-dir, creates it as root before
+  # each run (a tmpfiles rule could run before the mount, and the job's own
+  # ExecStartPre can't: ReadWritePaths of a missing directory fails its
+  # namespace even with "+"). On btrfs it also has new files compressed with
+  # zstd.
   isExternal = dir: !(lib.hasPrefix "${dataDir}/" dir);
   prepareDir = pkgs.writeShellScript "dnscount-prepare-dir" ''
     set -eu
@@ -88,15 +91,22 @@ let
       ${pkgs.btrfs-progs}/bin/btrfs property set "$1" compression zstd || true
     fi
   '';
-  externalDir = dir: lib.optionalAttrs (isExternal dir) {
+  # The job's side: wait for the mount and the -dir unit, write only there.
+  withDir = name: dir: svc: lib.recursiveUpdate svc (lib.optionalAttrs (isExternal dir) {
+    requires = [ "${name}-dir.service" ];
+    after = [ "${name}-dir.service" ];
+    unitConfig.RequiresMountsFor = [ dir ];
+    serviceConfig.ReadWritePaths = [ dir ];
+  });
+  # A job's -dir unit (only for a dir outside dataDir).
+  dirUnit = on: dir: mkIf (on && isExternal dir) {
+    description = "dnscount: create ${dir}";
     unitConfig.RequiresMountsFor = [ dir ];
     serviceConfig = {
-      ExecStartPre = "+${prepareDir} ${dir}";
-      ReadWritePaths = [ dir ];
+      Type = "oneshot";
+      ExecStart = "${prepareDir} ${dir}";
     };
   };
-  # Service attrs plus externalDir's, merging serviceConfig.
-  withDir = dir: svc: lib.recursiveUpdate svc (externalDir dir);
 
   rawArchiveOn = cfg.syslog.enable && cfg.syslog.keepRaw && cfg.syslog.rawArchiveDir != null;
   # Moves finished daily raw files (any day before today, untouched for 10
@@ -609,7 +619,7 @@ in
       };
     };
 
-    systemd.services.dnscount-backup = mkIf cfg.backup.enable (withDir cfg.backup.dir {
+    systemd.services.dnscount-backup = mkIf cfg.backup.enable (withDir "dnscount-backup" cfg.backup.dir {
       description = "dnscount: daily database backup";
       environment.DNSCOUNT_DB = db;
       serviceConfig = hardening // noNetwork // {
@@ -617,6 +627,7 @@ in
         ExecStart = "${bin} backup -keep ${toString cfg.backup.keep} ${cfg.backup.dir}";
       };
     });
+    systemd.services.dnscount-backup-dir = dirUnit cfg.backup.enable cfg.backup.dir;
     systemd.timers.dnscount-backup = mkIf cfg.backup.enable {
       wantedBy = [ "timers.target" ];
       timerConfig = {
@@ -626,13 +637,14 @@ in
       };
     };
 
-    systemd.services.dnscount-raw-archive = mkIf rawArchiveOn (withDir cfg.syslog.rawArchiveDir {
+    systemd.services.dnscount-raw-archive = mkIf rawArchiveOn (withDir "dnscount-raw-archive" cfg.syslog.rawArchiveDir {
       description = "dnscount: move finished raw syslog files to the archive";
       serviceConfig = hardening // noNetwork // {
         Type = "oneshot";
         ExecStart = rawArchive;
       };
     });
+    systemd.services.dnscount-raw-archive-dir = dirUnit rawArchiveOn cfg.syslog.rawArchiveDir;
     systemd.timers.dnscount-raw-archive = mkIf rawArchiveOn {
       wantedBy = [ "timers.target" ];
       timerConfig = {
