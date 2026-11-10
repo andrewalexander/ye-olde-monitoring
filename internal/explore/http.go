@@ -98,7 +98,7 @@ func (x *Explorer) Handler() http.Handler {
 		return st.Clients(p.SinceOr("7d"))
 	})
 	routes["GET /api/flagged"] = h(func(st *store.Store, r *http.Request, p *server.Params) (any, error) {
-		q := store.FlaggedQuery{Since: p.SinceOr("30d"), Limit: p.Int("limit")}
+		q := store.FlaggedQuery{Since: p.SinceOr("30d"), Limit: p.Int("limit"), Now: x.cfg.Now()}
 		if v := p.Str("verdict"); v == "all" {
 			q.Verdicts = []string{enrich.Malicious, enrich.Suspicious, enrich.Info}
 		} else if v != "" {

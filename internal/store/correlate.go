@@ -356,8 +356,8 @@ func (s *Store) inboundIPs(q ListQuery, now time.Time) ([]InboundIP, error) {
 	return out[:min(len(out), q.Limit)], nil
 }
 
-// DefenseCounts counts, for each of ips, the IDS blocks, breaker trips,
-// refused logins and firewall drops since `since`. Bans are BanCounts (restores need pairing).
+// DefenseCounts counts, for each of ips, the IDS blocks (and alerts let
+// through), breaker trips, refused logins and firewall drops since `since`. Bans are BanCounts (restores need pairing).
 // The lookups go by address, so they cost what the list is long.
 func (s *Store) DefenseCounts(ips []string, since time.Time) (map[string]Defenses, error) {
 	out := map[string]Defenses{}
@@ -373,6 +373,8 @@ func (s *Store) DefenseCounts(ips []string, since time.Time) (map[string]Defense
 		}{
 			{`SELECT src_ip, count(*) FROM ids_alerts WHERE action = 'blocked' AND ts >= ? AND src_ip IN (` + in + `) GROUP BY src_ip`,
 				func(d *Defenses, n int64) { d.IDS = n }},
+			{`SELECT src_ip, count(*) FROM ids_alerts WHERE action = 'allowed' AND ts >= ? AND src_ip IN (` + in + `) GROUP BY src_ip`,
+				func(d *Defenses, n int64) { d.AlertsAllowed = n }},
 			{`SELECT key, count(*) FROM breaker_trips WHERE tripped_at >= ? AND key IN (` + in + `) GROUP BY key`,
 				func(d *Defenses, n int64) { d.Trips = n }},
 			{`SELECT ip, count(*) FROM auth_failures WHERE ts >= ? AND ip IN (` + in + `) GROUP BY ip`,
@@ -737,11 +739,12 @@ type FlaggedRow struct {
 	Direction string    `json:"direction"` // in | out | both
 	First     time.Time `json:"first_seen"`
 	Last      time.Time `json:"last_seen"`
-	// Incoming: requests to our sites, bans and IDS alerts in the window.
-	Hits   int64    `json:"hits,omitempty"`
-	Sites  []string `json:"sites,omitempty"`
-	Bans   int64    `json:"bans,omitempty"`
-	Alerts int64    `json:"alerts,omitempty"`
+	// Incoming: requests to our sites, and what was done about it in the
+	// window (as on Inbound IPs), with the 30-day total to now.
+	Hits        int64     `json:"hits,omitempty"`
+	Sites       []string  `json:"sites,omitempty"`
+	Defenses    *Defenses `json:"defenses,omitempty"`
+	Defenses30d int64     `json:"defenses_30d,omitempty"`
 	// Outgoing: the LAN devices that looked it up (or, for an address, looked
 	// up a name that resolved to it), and those names.
 	Clients []ClientCount `json:"clients,omitempty"`
@@ -757,6 +760,7 @@ type FlaggedQuery struct {
 	// which are never flagged otherwise.
 	Verdicts []string
 	Limit    int
+	Now      time.Time // for bans still in force; zero is the wall clock
 }
 
 // Flagged lists every indicator on a list now that was seen since q.Since,
@@ -854,6 +858,7 @@ func (s *Store) Flagged(q FlaggedQuery) ([]FlaggedRow, error) {
 	if err != nil {
 		return nil, err
 	}
+	var inbound []string
 	for i := range out {
 		r := &out[i]
 		r.Intel = intel[r.Indicator]
@@ -872,14 +877,7 @@ func (s *Store) Flagged(q FlaggedQuery) ([]FlaggedRow, error) {
 			if sites.String != "" {
 				r.Sites = strings.Split(sites.String, ",")
 			}
-			if err := s.queryRow(`SELECT count(*) FROM ids_alerts WHERE src_ip = ? AND ts >= ?`, r.Indicator, since).Scan(&r.Alerts); err != nil {
-				return nil, err
-			}
-			bc, err := s.BanCounts([]string{r.Indicator}, q.Since)
-			if err != nil {
-				return nil, err
-			}
-			r.Bans = bc[r.Indicator]
+			inbound = append(inbound, r.Indicator)
 		}
 		if roles[i]&RolesOut != 0 {
 			if r.Via, err = s.domainsResolvingTo(r.Indicator, since, 20); err != nil {
@@ -890,7 +888,62 @@ func (s *Store) Flagged(q FlaggedQuery) ([]FlaggedRow, error) {
 			}
 		}
 	}
+	if q.Now.IsZero() {
+		q.Now = time.Now()
+	}
+	win, d30, err := s.DefensesFor(inbound, q.Since, q.Now)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		r := &out[i]
+		if d, ok := win[r.Indicator]; ok {
+			r.Defenses, r.Defenses30d = &d, d30[r.Indicator]
+		}
+	}
 	return out, nil
+}
+
+// DefensesFor is, for each of ips, what was done about it since `since`
+// (bans with their leaks, and IDS alerts let through, included) and the
+// 30-day total to now. It goes by address, so it costs what the list is
+// long: for short lists, where InboundIPs reads whole windows.
+func (s *Store) DefensesFor(ips []string, since, now time.Time) (map[string]Defenses, map[string]int64, error) {
+	win, err := s.DefenseCounts(ips, since)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, ip := range ips {
+		bans, err := s.Bans(BanFilter{Since: since, IP: ip, Limit: 100000}, now)
+		if err != nil {
+			return nil, nil, err
+		}
+		d := win[ip]
+		for _, b := range bans {
+			if !b.Restored {
+				d.Bans++
+			}
+			if b.HitsDuring > 0 {
+				d.Leaks++
+			}
+		}
+		d.sum()
+		win[ip] = d
+	}
+	month := now.AddDate(0, 0, -30)
+	c30, err := s.DefenseCounts(ips, month)
+	if err != nil {
+		return nil, nil, err
+	}
+	b30, err := s.BanCounts(ips, month)
+	if err != nil {
+		return nil, nil, err
+	}
+	d30 := map[string]int64{}
+	for _, ip := range ips {
+		d30[ip] = c30[ip].Total + b30[ip]
+	}
+	return win, d30, nil
 }
 
 func (s *Store) domainsResolvingTo(ip, since string, limit int) ([]string, error) {

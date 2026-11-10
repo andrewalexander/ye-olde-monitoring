@@ -348,7 +348,9 @@ const LIST_VIEWS = {
       col("Kind", "kind"), col("Dir", "direction"), col("Feeds", "feeds", "tags"),
       col("AS", "asn", "text", { formatter: (c) => document.createTextNode(asnText(c.getRow().getData())) }),
       col("Owner", "as_owner"), col("CC", "country"),
-      col("Hits", "hits", "num"), col("Alerts", "alerts", "num"), col("Bans", "bans", "num"), bans30(), abuseCol(), portsCol(),
+      col("Hits", "hits", "num"), defensesCol(),
+      col("Defenses 30d", "defenses_30d", "num", { headerTooltip: "The same kinds over the last 30 days, whatever the window" }),
+      abuseCol(), portsCol(),
       col("LAN clients", "clients", "list", {
         formatter: (c) => el("span", { class: "tags" }, (c.getValue() || []).map(clientLink)),
         headerFilterFunc: (t, v) => (v || []).some((x) => x.ip.includes(t) || (x.name || "").toLowerCase().includes(String(t).toLowerCase())),

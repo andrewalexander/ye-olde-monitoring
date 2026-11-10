@@ -204,8 +204,15 @@ func TestFlaggedInAndOut(t *testing.T) {
 	x := openExplorer(t)
 	importFile(t, x.primary, "unifi-syslog.log", ingest.Multi{dns.Dnsmasq{}, fw.IPTables{}})
 	importFile(t, x.primary, "unifi-ids.log", ids.UniFi{})
-	// The same address also requested a probe path from our site.
+	// The same address also requested a probe path from our site, while a
+	// ban was in force (a leak), and the IPS blocked it once and let it
+	// through once.
+	ban(t, x.primary, ingest.Ban{TS: now.Add(-2 * time.Hour), Event: "ban", Jail: "caddy-probe", IP: "203.0.113.66"})
 	addHits(t, x.primary, "203.0.113.66", "jf.example", now.Add(-time.Hour))
+	x.primary.InsertRecords([]ingest.Record{
+		{Alert: &ingest.IDSAlert{Hash: "fb", TS: now.Add(-time.Hour), SrcIP: "203.0.113.66", Action: "blocked", Source: "test"}},
+		{Alert: &ingest.IDSAlert{Hash: "fa", TS: now.Add(-time.Hour), SrcIP: "203.0.113.66", Action: "allowed", Source: "test"}},
+	})
 	// A LAN device with a global IPv6 address hits the site too: never public.
 	x.primary.InsertRecords([]ingest.Record{{Query: &ingest.DNSQuery{Hash: "v6q", TS: now, ClientIP: "2606:4700:4700::5",
 		Domain: "example.net", Source: "test"}}})
@@ -227,13 +234,21 @@ func TestFlaggedInAndOut(t *testing.T) {
 	}
 	since := now.AddDate(0, 0, -30)
 
-	fl, err := x.ro.Flagged(store.FlaggedQuery{Since: since})
+	fl, err := x.ro.Flagged(store.FlaggedQuery{Since: since, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := map[string]store.FlaggedRow{}
 	for _, r := range fl {
 		got[r.Indicator] = r
+	}
+	// What was done about it is the Inbound IPs tally, warnings included.
+	if d := got["203.0.113.66"].Defenses; d == nil || d.Bans != 1 || d.Leaks != 1 || d.IDS < 1 || d.AlertsAllowed < 1 ||
+		d.Total != d.IDS+d.Bans+d.Trips+d.Logins+d.Firewall || got["203.0.113.66"].Defenses30d < d.Total {
+		t.Errorf("203.0.113.66 defenses: %+v (30d %d)", d, got["203.0.113.66"].Defenses30d)
+	}
+	if got["evil.example.org"].Defenses != nil {
+		t.Error("a domain got a defenses tally")
 	}
 	if _, ok := got["2606:4700:4700::5"]; ok {
 		t.Error("a LAN device was flagged as public")

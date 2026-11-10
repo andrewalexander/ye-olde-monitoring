@@ -230,7 +230,7 @@ func report(args []string) error {
 			if since.IsZero() {
 				since = time.Now().AddDate(0, 0, -30)
 			}
-			q := store.FlaggedQuery{Since: since, Limit: *limit}
+			q := store.FlaggedQuery{Since: since, Limit: *limit, Now: time.Now()}
 			switch *verdict {
 			case "":
 			case "all":
@@ -243,7 +243,7 @@ func report(args []string) error {
 				return err
 			}
 			w := table()
-			fmt.Fprintln(w, "LAST SEEN\tINDICATOR\tDIR\tVERDICT\tFEEDS\tASN\tHITS\tALERTS\tBANS\tLAN CLIENTS\tVIA")
+			fmt.Fprintln(w, "LAST SEEN\tINDICATOR\tDIR\tVERDICT\tFEEDS\tASN\tHITS\tDEFENSES\t30D\tLAN CLIENTS\tVIA")
 			for _, r := range rows {
 				var verdict, asn string
 				var feeds []string
@@ -257,8 +257,12 @@ func report(args []string) error {
 				for _, c := range r.Clients {
 					clients = append(clients, fmt.Sprintf("%s(%d)", c.IP, c.Count))
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n", localTime(r.Last), r.Indicator, r.Direction,
-					verdict, strings.Join(feeds, ","), asn, r.Hits, r.Alerts, r.Bans, trunc(strings.Join(clients, " "), 50),
+				var defenses string
+				if d := r.Defenses; d != nil {
+					defenses = defenseText(*d)
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s\n", localTime(r.Last), r.Indicator, r.Direction,
+					verdict, strings.Join(feeds, ","), asn, r.Hits, defenses, r.Defenses30d, trunc(strings.Join(clients, " "), 50),
 					trunc(strings.Join(r.Via, ","), 40))
 			}
 			return w.Flush()
@@ -516,4 +520,32 @@ func alertEnd(ip, name string, port int) string {
 		return "?:" + strconv.Itoa(port)
 	}
 	return "-"
+}
+
+// defenseText is a Defenses tally on one line: the total, then each kind,
+// then the warnings ("3 (ids 2, fw 1) !leak 1").
+func defenseText(d store.Defenses) string {
+	if d.Total == 0 && d.Leaks == 0 && d.AlertsAllowed == 0 {
+		return ""
+	}
+	var kinds []string
+	for _, k := range []struct {
+		name string
+		n    int64
+	}{{"ids", d.IDS}, {"ban", d.Bans}, {"trip", d.Trips}, {"login", d.Logins}, {"fw", d.Firewall}} {
+		if k.n > 0 {
+			kinds = append(kinds, fmt.Sprintf("%s %d", k.name, k.n))
+		}
+	}
+	s := fmt.Sprint(d.Total)
+	if len(kinds) > 0 {
+		s += " (" + strings.Join(kinds, ", ") + ")"
+	}
+	if d.Leaks > 0 {
+		s += fmt.Sprintf(" !leak %d", d.Leaks)
+	}
+	if d.AlertsAllowed > 0 {
+		s += fmt.Sprintf(" !allowed %d", d.AlertsAllowed)
+	}
+	return s
 }

@@ -196,8 +196,9 @@ Tables
   verdict=reserved (alone or with others) adds special-purpose addresses
   and names, which are never flagged otherwise; they sort last.
   [{"indicator","kind","direction": in|out|both,"first_seen","last_seen",
-    "hits","sites","bans","alerts","clients":[{"ip","name","count"}],
+    "hits","sites","defenses","defenses_30d","clients":[{"ip","name","count"}],
     "via_domains", ...intel}]
+  defenses and defenses_30d: for incoming addresses, as on /api/ips.
 
 /api/overview
   Rows per table (all-time and last 24h), indicators indexed, flagged
