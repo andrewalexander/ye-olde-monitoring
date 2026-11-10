@@ -74,6 +74,49 @@ let
       (pkgs.writeText "dnscount-feeds.json" (builtins.toJSON
         (lib.mapAttrsToList (name: f: f // { inherit name; }) cfg.explore.feeds.extra)))
     ];
+
+  # A directory outside dataDir, such as an archive on a second disk. The unit
+  # won't start until the filesystem holding it is mounted, so a nofail drive
+  # that's missing fails the job instead of filling the disk under the mount
+  # point. Root creates it on each start (a tmpfiles rule could run before the
+  # mount) and, on btrfs, has new files compressed with zstd.
+  isExternal = dir: !(lib.hasPrefix "${dataDir}/" dir);
+  prepareDir = pkgs.writeShellScript "dnscount-prepare-dir" ''
+    set -eu
+    ${pkgs.coreutils}/bin/install -d -o dnscount -g dnscount -m 0750 "$1"
+    if [ "$(${pkgs.coreutils}/bin/stat -f -c %T "$1")" = btrfs ]; then
+      ${pkgs.btrfs-progs}/bin/btrfs property set "$1" compression zstd || true
+    fi
+  '';
+  externalDir = dir: lib.optionalAttrs (isExternal dir) {
+    unitConfig.RequiresMountsFor = [ dir ];
+    serviceConfig = {
+      ExecStartPre = "+${prepareDir} ${dir}";
+      ReadWritePaths = [ dir ];
+    };
+  };
+  # Service attrs plus externalDir's, merging serviceConfig.
+  withDir = dir: svc: lib.recursiveUpdate svc (externalDir dir);
+
+  rawArchiveOn = cfg.syslog.enable && cfg.syslog.keepRaw && cfg.syslog.rawArchiveDir != null;
+  # Moves finished daily raw files (any day before today, untouched for 10
+  # minutes) into the archive. Copy, rename, then delete the original, so a
+  # drive that drops mid-copy loses nothing.
+  rawArchive = pkgs.writeShellScript "dnscount-raw-archive" ''
+    set -eu
+    PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.findutils ]}
+    src=${dataDir}/raw dst=${toString cfg.syslog.rawArchiveDir}
+    today=$(date +%F)
+    find "$src" -maxdepth 1 -type f -name '????-??-??.log' -mmin +10 -print0 |
+      while IFS= read -r -d "" f; do
+        name=$(basename "$f")
+        [ "''${name%.log}" \< "$today" ] || continue
+        cp --preserve=timestamps "$f" "$dst/$name.tmp"
+        mv "$dst/$name.tmp" "$dst/$name"
+        rm "$f"
+        echo "archived $name"
+      done
+  '';
 in
 {
   imports = [ ./guard.nix ];
@@ -174,6 +217,17 @@ in
         type = types.bool;
         default = true;
         description = "Keep every received line in daily files under ${dataDir}/raw, for re-ingesting.";
+      };
+      rawArchiveDir = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "/mnt/archive/dnscount/raw";
+        description = ''
+          Once a day, move finished raw files (every day before today) here,
+          for example to a bigger disk. Today's file always stays in
+          ${dataDir}/raw. If this is on a mount, the job waits for it and
+          fails rather than write under an empty mount point.
+        '';
       };
       openFirewall = mkOption {
         type = types.bool;
@@ -315,11 +369,21 @@ in
       enable = mkOption {
         type = types.bool;
         default = true;
-        description = "Daily copy of the database to ${dataDir}/backups.";
+        description = "Daily copy of the database to backup.dir.";
       };
       keep = mkOption {
         type = types.ints.positive;
         default = 7;
+      };
+      dir = mkOption {
+        type = types.str;
+        default = "${dataDir}/backups";
+        example = "/mnt/archive/dnscount/db";
+        description = ''
+          Where the copies go. Outside ${dataDir} (another disk), the job
+          waits for its mount and fails rather than write under an empty
+          mount point.
+        '';
       };
     };
   };
@@ -545,19 +609,35 @@ in
       };
     };
 
-    systemd.services.dnscount-backup = mkIf cfg.backup.enable {
+    systemd.services.dnscount-backup = mkIf cfg.backup.enable (withDir cfg.backup.dir {
       description = "dnscount: daily database backup";
       environment.DNSCOUNT_DB = db;
       serviceConfig = hardening // noNetwork // {
         Type = "oneshot";
-        ExecStart = "${bin} backup -keep ${toString cfg.backup.keep} ${dataDir}/backups";
+        ExecStart = "${bin} backup -keep ${toString cfg.backup.keep} ${cfg.backup.dir}";
       };
-    };
+    });
     systemd.timers.dnscount-backup = mkIf cfg.backup.enable {
       wantedBy = [ "timers.target" ];
       timerConfig = {
         OnCalendar = "daily";
         RandomizedDelaySec = "1h";
+        Persistent = true;
+      };
+    };
+
+    systemd.services.dnscount-raw-archive = mkIf rawArchiveOn (withDir cfg.syslog.rawArchiveDir {
+      description = "dnscount: move finished raw syslog files to the archive";
+      serviceConfig = hardening // noNetwork // {
+        Type = "oneshot";
+        ExecStart = rawArchive;
+      };
+    });
+    systemd.timers.dnscount-raw-archive = mkIf rawArchiveOn {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = "*-*-* 00:30";
+        RandomizedDelaySec = "30m";
         Persistent = true;
       };
     };

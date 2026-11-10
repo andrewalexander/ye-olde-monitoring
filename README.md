@@ -134,6 +134,8 @@ Includes pihole or adguard-like dns filtering using public block lists regularly
 
 `-raw` keeps every received line in daily files. Re-ingest with `dnscount ingest-dns -format unifi raw/*.log`: rows dedup on a line hash, so re-imports add nothing. This is useful as parsers are added and we want to backfill data we otherwise could have included when it came in the first time.
 
+The files run to a few hundred MB a day and are never deleted. On NixOS, `services.dnscount.syslog.rawArchiveDir` moves each finished day to another disk every night, and `services.dnscount.backup.dir` does the same for the daily database copies. Today's file and the live database stay in `/var/lib/dnscount`. If either directory is on a mount that's missing, the job fails instead of writing under the empty mount point. On btrfs, the jobs turn on zstd compression for these directories.
+
 Also supported: `-format dnsmasq` (Pi-hole too) and `-format adguard`. Syslog timestamps carry no timezone, so keep this host's zone the same as the router's. Other ways to get logs off the router are written up in `internal/ingest/syslog/syslog.go`.
 
 **LAN devices are named** from DHCP leases, UniFi client events (the alias you set, else the hostname), and the neighbour table for ipv6. 

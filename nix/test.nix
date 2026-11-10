@@ -12,7 +12,10 @@ self:
         enable = true;
         address = "127.0.0.1";
         allow = [ "127.0.0.1" ];
+        # Outside /var/lib/dnscount, like a second disk.
+        rawArchiveDir = "/srv/archive/raw";
       };
+      backup.dir = "/srv/archive/db";
       # No internet in the VM: the only feed is a local file.
       explore = {
         enable = true;
@@ -120,6 +123,18 @@ self:
     machine.succeed("curl -fsS http://127.0.0.1:8090/api/health | jq -e '.lookups[0].units_24h == 1'")
 
     machine.succeed("systemctl start dnscount-backup.service")
-    machine.succeed("ls /var/lib/dnscount/backups | grep -q .")
+    machine.succeed("ls /srv/archive/db | grep -q '^dnscount-.*\\.db$'")
+    machine.succeed("stat -c %U:%a /srv/archive/db | grep -x dnscount:750")
+
+    # Finished days move to the archive; today's file stays for the writer.
+    machine.succeed("install -o dnscount -g dnscount -m 0640 /dev/null /var/lib/dnscount/raw/2000-01-01.log")
+    machine.succeed("echo old-line >> /var/lib/dnscount/raw/2000-01-01.log")
+    machine.succeed("touch -d '2000-01-02' /var/lib/dnscount/raw/2000-01-01.log")
+    machine.succeed("touch -d '1 hour ago' /var/lib/dnscount/raw/$(date +%F).log")
+    machine.succeed("systemctl start dnscount-raw-archive.service")
+    machine.succeed("grep -qx old-line /srv/archive/raw/2000-01-01.log")
+    machine.fail("test -e /var/lib/dnscount/raw/2000-01-01.log")
+    machine.succeed("test -s /var/lib/dnscount/raw/$(date +%F).log")
+    machine.fail("ls /srv/archive/raw | grep -q tmp")
   '';
 }
